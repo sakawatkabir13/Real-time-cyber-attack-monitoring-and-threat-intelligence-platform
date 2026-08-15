@@ -1,0 +1,23 @@
+[Unit]
+Description=Vanguard-360 Log Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vanguard-agent
+EnvironmentFile=/opt/vanguard-agent/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/vanguard-agent/venv/bin/python /opt/vanguard-agent/agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/vanguard-agent
+ReadOnlyPaths=-/var/log/nginx -/var/log/apache2
+
+[Install]
+WantedBy=multi-user.target

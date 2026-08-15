@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 6%;
+    --foreground: 160 30% 85%;
+
+    --card: 220 18% 10%;
+    --card-foreground: 160 30% 85%;
+
+    --popover: 220 18% 10%;
+    --popover-foreground: 160 30% 85%;
+
+    --primary: 160 100% 45%;
+    --primary-foreground: 220 20% 6%;
+
+    --secondary: 200 80% 40%;
+    --secondary-foreground: 200 10% 95%;
+
+    --muted: 220 15% 15%;
+    --muted-foreground: 220 10% 55%;
+
+    --accent: 180 80% 45%;
+    --accent-foreground: 220 20% 6%;
+
+    --destructive: 0 80% 55%;
+    --destructive-foreground: 0 0% 98%;
+
+    --warning: 40 95% 55%;
+    --warning-foreground: 220 20% 6%;
+
+    --success: 145 70% 45%;
+    --success-foreground: 220 20% 6%;
+
+    --border: 220 15% 18%;
+    --input: 220 15% 18%;
+    --ring: 160 100% 45%;
+
+    --radius: 0.5rem;
+
+    --chart-1: 160 100% 45%;
+    --chart-2: 200 80% 40%;
+    --chart-3: 180 80% 45%;
+    --chart-4: 0 80% 55%;
+    --chart-5: 40 95% 55%;
+
+    --sidebar-background: 220 18% 8%;
+    --sidebar-foreground: 160 30% 85%;
+    --sidebar-primary: 160 100% 45%;
+    --sidebar-primary-foreground: 220 20% 6%;
+    --sidebar-accent: 220 15% 15%;
+    --sidebar-accent-foreground: 160 30% 85%;
+    --sidebar-border: 220 15% 18%;
+    --sidebar-ring: 160 100% 45%;
+
+    --glow-primary: 0 0 20px hsl(160 100% 45% / 0.3);
+    --glow-accent: 0 0 20px hsl(180 80% 45% / 0.3);
+    --glow-danger: 0 0 20px hsl(0 80% 55% / 0.3);
+  }
+
+  .light {
+    --background: 210 25% 96%;
+    --foreground: 220 25% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 12%;
+    --muted: 210 20% 90%;
+    --muted-foreground: 220 10% 42%;
+    --border: 210 18% 82%;
+    --input: 210 18% 82%;
+    --sidebar-background: 210 22% 92%;
+    --sidebar-foreground: 220 25% 12%;
+    --sidebar-accent: 210 18% 86%;
+    --sidebar-accent-foreground: 220 25% 12%;
+    --sidebar-border: 210 18% 82%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+  }
+
+  code, pre, .font-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+}
+
+@layer utilities {
+  .glow-primary {
+    box-shadow: var(--glow-primary);
+  }
+  .glow-accent {
+    box-shadow: var(--glow-accent);
+  }
+  .glow-danger {
+    box-shadow: var(--glow-danger);
+  }
+  .text-glow {
+    text-shadow: 0 0 10px hsl(160 100% 45% / 0.5);
+  }
+  .border-glow {
+    border-color: hsl(160 100% 45% / 0.3);
+    box-shadow: inset 0 0 20px hsl(160 100% 45% / 0.05), var(--glow-primary);
+  }
+  .cyber-grid {
+    background-image:
+      linear-gradient(hsl(160 100% 45% / 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(160 100% 45% / 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+  .scanline {
+    background: linear-gradient(
+      transparent 0%,
+      hsl(160 100% 45% / 0.03) 50%,
+      transparent 100%
+    );
+    background-size: 100% 4px;
+  }
+}
