@@ -60,15 +60,15 @@ Most teams running their own infrastructure have **no real-time visibility** int
 ## ✨ Features
 
 ### 🧠 For Detection Engineers
-- 🩺 **Hybrid detection pipeline** — deterministic signatures (SQLi, XSS, path traversal, brute force, scanner/recon, DDoS) + per-source and per-server IsolationForest behavioural models
+- 🩺 **Hybrid detection pipeline** — SQLi/XSS/traversal signatures, authentication-failure and contextual HTTP-flood warnings, scanner indicators, and per-source/per-server IsolationForest behavioural models
 - 🧪 **Trained on real traffic**, not synthetic data — models only engage once enough clean windows have accumulated
 - 🔁 **Zero-downtime hot-reload** the moment a newly trained model passes validation
-- 📈 **Sliding-window rate tracking** in Redis for volumetric detection
+- 📈 **Event-time rate tracking** in Redis, measured response-time coverage, burst and change features, and scheduled completed-window scoring
 
 ### 🛰️ For Operators
 - 🧾 **Idempotent ingestion** — safe against agent retries and duplicate delivery
 - 🌍 **Live world map** of attack origins with geo-located source IPs
-- 🧯 **Deduplicated, persistent alerting** with acknowledge / resolve workflow and occurrence counters
+- 🧯 **Persistent alerts** with acknowledgment, investigation verdicts/history, occurrence counters, and suggested related-incident groups
 - ⏸️ **Remote collector fleet management** — pause or resume log shipping per server from the dashboard, with heartbeat-based online / offline tracking
 - 🧹 **Scheduled retention cleanup** so the database doesn't grow unbounded
 
@@ -162,6 +162,9 @@ All endpoints are served under `/api`, behind the bundled Nginx.
 | `GET` | `/api/stats` | Session | Aggregate dashboard statistics (cached) |
 | `GET` | `/api/alerts` | Session | List deduplicated alerts, filterable by status |
 | `PATCH` | `/api/alerts/{alert_id}/acknowledge` | Session | Acknowledge an alert |
+| `PATCH` | `/api/alerts/{alert_id}/review` | Session | Save an investigation verdict and evidence with revision checking |
+| `GET` | `/api/alerts/{alert_id}/reviews` | Session | Read investigation history |
+| `GET` | `/api/incidents` | Session | Read suggested related-incident groups |
 | `GET` | `/api/ip-lookup/{ip}` | Session | Reputation and history for an IP |
 | `POST` | `/api/analyze-threat` | Session | LLM-generated plain-language threat summary |
 | `POST` | `/api/analyze-log-file` | Session | Upload and analyze a historical log file |
@@ -392,11 +395,13 @@ A few variables deserve more explanation than a table row can give:
 
 Every ingested event is evaluated in order:
 
-1. **Volumetric check** — sliding-window request rate per source IP
+1. **Context counters** — event-time request volume, path repetition, failures and measured slow responses per server/source
 2. **Signature rules** — SQL injection, XSS, path traversal, brute force, scanner/recon patterns
-3. **Behavioural scoring** — IsolationForest models trained per-server and per-source on real traffic features, only engaged once enough clean data has accumulated (`ML_MIN_TRAINING_WINDOWS`)
+3. **Behavioural aggregation** — summarize real server/source traffic windows; an independent scheduled worker scores completed windows, even if a source stops sending requests. Compatible IsolationForest models engage only after enough eligible data accumulates (`ML_MIN_TRAINING_WINDOWS`).
 
-Only genuine threats are persisted — normal traffic is evaluated but not stored, keeping dashboard metrics meaningful rather than inflated by routine requests. High and critical severity events are deduplicated into a single alert record with an occurrence counter rather than spamming duplicates.
+Detected suspicious events are persisted, not every normal request. Traffic summaries retain normal activity for training. A finding is not proof of an attack: human investigation records the outcome. High/critical events and ML findings create deduplicated alerts.
+
+See [detection improvements and upgrade instructions](docs/DETECTION_IMPROVEMENTS.md) for the schema-3 model transition, response-time logging, contextual thresholds, and bounded incident grouping. Independent model-accuracy evaluation has not been added.
 
 ---
 

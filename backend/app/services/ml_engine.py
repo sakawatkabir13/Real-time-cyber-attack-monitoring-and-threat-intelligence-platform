@@ -35,6 +35,7 @@ class MLEngine:
     def __init__(self) -> None:
         self.bundle: dict[str, Any] | None = None
         self._last_mtime = 0.0
+        self._last_attempt_mtime = 0.0
         self.load_model()
 
     def load_model(self) -> None:
@@ -44,9 +45,14 @@ class MLEngine:
             logger.info("Behavioral model is warming up; no model artifact exists yet")
             return
         try:
+            self._last_attempt_mtime = os.path.getmtime(settings.MODEL_PATH)
             candidate = joblib.load(settings.MODEL_PATH)
-            if not isinstance(candidate, dict) or candidate.get("schema_version") != 2:
-                raise ValueError("unsupported model artifact; real-window schema v2 required")
+            if not isinstance(candidate, dict) or candidate.get("schema_version") != 3:
+                raise ValueError("behavioral schema v3 required; collect new windows and retrain")
+            for scope, group in candidate.get("models", {}).items():
+                for component in group.get("servers", {}).values():
+                    if component.get("features") != list(FEATURE_NAMES.get(scope, ())):
+                        raise ValueError("model feature definitions do not match this backend")
             self.bundle = candidate
             self._last_mtime = os.path.getmtime(settings.MODEL_PATH)
             logger.info(
@@ -65,7 +71,7 @@ class MLEngine:
             return
         try:
             mtime = os.path.getmtime(settings.MODEL_PATH)
-            if mtime != self._last_mtime:
+            if mtime != self._last_attempt_mtime:
                 self.load_model()
         except OSError as exc:
             logger.warning("Could not stat behavioral model: %s", exc)

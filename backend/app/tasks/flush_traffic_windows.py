@@ -14,32 +14,19 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import sync_database_url
 from app.models.traffic_window import TrafficWindow
-from app.services.behavioral_features import values_from_snapshot
+from app.services.behavioral_features import (
+    SNAPSHOT_SCRIPT, decode_snapshot, previous_key, values_from_snapshot,
+)
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 
 def _snapshot(client: redis.Redis, base: str) -> tuple[dict[str, str], dict[str, int], float] | None:
-    data = client.hgetall(base)
-    if not data:
+    seconds = client.hget(base, "window_seconds")
+    if not seconds:
         return None
-    pipe = client.pipeline()
-    pipe.pfcount(f"{base}:ips")
-    pipe.pfcount(f"{base}:paths")
-    pipe.pfcount(f"{base}:uas")
-    pipe.zrevrange(f"{base}:path_counts", 0, 0, withscores=True)
-    unique_ips, unique_paths, unique_uas, top_paths = pipe.execute()
-    top_count = float(top_paths[0][1]) if top_paths else 0.0
-    return (
-        data,
-        {
-            "unique_ips": int(unique_ips),
-            "unique_paths": int(unique_paths),
-            "unique_user_agents": int(unique_uas),
-        },
-        top_count,
-    )
+    return decode_snapshot(client.eval(SNAPSHOT_SCRIPT, 2, base, previous_key(base, int(seconds))))
 
 
 @celery_app.task(name="flush_traffic_windows_task")
@@ -77,6 +64,7 @@ def flush_traffic_windows_task() -> int:
             )
             rule_threat_count = int(data.get("rule_threat_count", 0))
             row = {
+                "feature_schema": int(data.get("feature_schema", 2)),
                 "server_id": data["server_id"],
                 "scope": scope,
                 "entity_key": data["entity_key"],
@@ -109,6 +97,14 @@ def flush_traffic_windows_task() -> int:
                 "model_version": data.get("model_version") or None,
                 "anomaly_explanation": data.get("anomaly_explanation") or None,
             }
+            for name in ("request_time_coverage", "peak_second_requests", "burst_ratio",
+                         "rate_change_ratio", "previous_window_present", "failed_auth_ratio",
+                         "max_path_unique_ips"):
+                row[name] = values[name] if row["feature_schema"] == 3 else None
+            if row["feature_schema"] < 3:
+                # Preserve legacy measurement semantics; never label them schema 3.
+                row["avg_request_time"] = float(data.get("request_time_total", 0)) / max(1, count)
+            row["path"] = data.get("top_path") or None
             rows.append((base, row))
 
         if not rows:
@@ -129,10 +125,10 @@ def flush_traffic_windows_task() -> int:
                     )
                 )
             session.commit()
-        persisted_at = time.time()
         pipe = client.pipeline()
         for base, _ in rows:
-            pipe.hset(base, "persisted_at", persisted_at)
+            # Never mark a newer concurrent observation as already persisted.
+            pipe.hset(base, "persisted_at", now)
         pipe.execute()
         return len(rows)
     except Exception:

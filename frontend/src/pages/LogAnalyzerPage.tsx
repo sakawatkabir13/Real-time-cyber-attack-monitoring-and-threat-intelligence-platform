@@ -5,6 +5,7 @@ import { useToast } from '@/hooks/use-toast';
 export default function LogAnalyzerPage() {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [rejectedLines, setRejectedLines] = useState(0);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'analyzing' | 'done' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -18,6 +19,7 @@ export default function LogAnalyzerPage() {
         if (!response.ok) throw new Error('Could not read analysis status');
         const result = await response.json();
         if (cancelled) return;
+        setRejectedLines(Number(result.rejected ?? 0));
         if (result.state === 'complete') setStatus('done');
         if (result.state === 'error') setStatus('error');
       } catch {
@@ -55,6 +57,7 @@ export default function LogAnalyzerPage() {
     if (!file) return;
 
     setIsUploading(true);
+    setRejectedLines(0);
     setStatus('uploading');
 
     const formData = new FormData();
@@ -93,8 +96,11 @@ export default function LogAnalyzerPage() {
     <div className="p-8 h-full flex flex-col">
       <h1 className="text-2xl font-bold font-display text-primary mb-2 text-glow">Log Analyzer</h1>
       <p className="text-muted-foreground font-mono text-sm mb-8 max-w-2xl">
-        Upload your Nginx or Apache access logs to simulate historical traffic. The backend will process each line through the ML Engine and replay the events onto your dashboard perfectly in real-time.
+        Upload Nginx/Apache access logs or JSON lines. Rules use the original request times. Completed traffic windows are scored separately when a compatible ML model is available.
       </p>
+      {rejectedLines > 0 && <p role="status" className="mb-4 text-sm text-warning">
+        {rejectedLines} lines rejected. Check the log format, timezone-bearing timestamps, IP addresses, and numeric measurements.
+      </p>}
 
       <div className="flex-1 max-w-3xl">
         <div
@@ -109,7 +115,7 @@ export default function LogAnalyzerPage() {
             ref={fileInputRef}
             onChange={handleFileChange}
             className="hidden"
-            accept=".log,.txt"
+            accept=".log,.txt,.jsonl"
           />
 
           {!file ? (

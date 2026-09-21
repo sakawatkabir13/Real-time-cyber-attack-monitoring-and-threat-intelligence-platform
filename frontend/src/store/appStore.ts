@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type ReviewVerdict = 'confirmed_malicious' | 'legitimate' | 'misconfiguration' | 'uncertain';
+
 export interface Alert {
   id: string;
   serverId: string;
@@ -17,6 +19,11 @@ export interface Alert {
   occurrenceCount: number;
   acknowledged?: boolean;
   acknowledgedAt?: string | null;
+  verdict: ReviewVerdict | 'unreviewed';
+  reviewVersion: number;
+  reviewedAt?: string | null;
+  reviewNotes?: string;
+  incidentGroupId?: string | null;
 }
 
 type BackendAlert = Omit<Alert, 'severity'> & { severity: string };
@@ -26,7 +33,7 @@ function normalizeAlert(alert: BackendAlert): Alert {
   const severity = value === 'critical' ? 'Critical'
     : value === 'high' ? 'High'
       : value === 'medium' ? 'Medium' : 'Low';
-  return { ...alert, severity };
+  return { ...alert, severity, verdict: alert.verdict ?? 'unreviewed', reviewVersion: alert.reviewVersion ?? 0 };
 }
 
 interface AppState {
@@ -35,6 +42,7 @@ interface AppState {
   loadAlerts: () => Promise<void>;
   upsertAlert: (alert: BackendAlert) => void;
   acknowledgeAlert: (id: string) => Promise<boolean>;
+  reviewAlert: (id: string, verdict: ReviewVerdict, notes: string, expectedVersion: number) => Promise<string | null>;
   settings: {
     theme: 'dark' | 'light';
     autoRefresh: boolean;
@@ -84,6 +92,21 @@ export const useAppStore = create<AppState>()(
         } catch (error) {
           console.error(error);
           return false;
+        }
+      },
+      reviewAlert: async (id, verdict, notes, expectedVersion) => {
+        try {
+          const response = await fetch(`/api/alerts/${encodeURIComponent(id)}/review`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ verdict, notes, expected_version: expectedVersion }),
+          });
+          if (response.status === 409) return 'Another review was saved. Reload the current verdict before trying again.';
+          if (!response.ok) return `Review could not be saved (${response.status}). Your notes have been kept here.`;
+          const alert = normalizeAlert(await response.json() as BackendAlert);
+          set((state) => ({ alerts: state.alerts.map((item) => item.id === id ? alert : item) }));
+          return null;
+        } catch {
+          return 'Network error. Your review was not confirmed saved; retry or reload its history.';
         }
       },
       settings: {

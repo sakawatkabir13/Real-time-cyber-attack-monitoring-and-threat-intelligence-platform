@@ -44,6 +44,14 @@ FEATURE_NAMES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Schema v3: timing missingness, bursts, changes, repetition, and coordination.
+BEHAVIOR_FEATURES = (
+    "request_time_coverage", "peak_second_requests", "burst_ratio",
+    "rate_change_ratio", "previous_window_present", "failed_auth_ratio",
+)
+FEATURE_NAMES["server"] += BEHAVIOR_FEATURES + ("max_path_unique_ips",)
+FEATURE_NAMES["source"] += BEHAVIOR_FEATURES + ("top_path_share",)
+
 LOG_FEATURES = {
     "request_rate",
     "unique_ips",
@@ -53,6 +61,9 @@ LOG_FEATURES = {
     "unique_user_agents",
     "reporter_count",
     "community_reports",
+    "peak_second_requests",
+    "rate_change_ratio",
+    "max_path_unique_ips",
 }
 
 FEATURE_LABELS = {
@@ -73,6 +84,13 @@ FEATURE_LABELS = {
     "hour_cos": "time-of-day pattern",
     "weekday_sin": "day-of-week pattern",
     "weekday_cos": "day-of-week pattern",
+    "request_time_coverage": "response-time measurement coverage",
+    "peak_second_requests": "peak requests in one second",
+    "burst_ratio": "fraction of requests in the busiest second",
+    "rate_change_ratio": "change from the preceding traffic window",
+    "previous_window_present": "availability of preceding-window context",
+    "failed_auth_ratio": "authentication-failure ratio",
+    "max_path_unique_ips": "sources targeting the same path",
 }
 
 

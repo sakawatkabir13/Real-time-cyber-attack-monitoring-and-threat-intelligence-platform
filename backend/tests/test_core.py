@@ -82,6 +82,7 @@ def test_behavioral_window_identity_is_unique_and_features_are_aggregated():
             "status_5xx": "2",
             "bytes_total": "2000",
             "request_time_total": "10",
+            "timed_request_count": "20",
         },
         {"unique_ips": 10, "unique_paths": 3, "unique_user_agents": 4},
         8,
@@ -160,7 +161,7 @@ def test_model_artifact_is_cross_service_readable_and_bad_reload_keeps_last_good
     monkeypatch.setattr(settings, "MODEL_PATH", str(path))
     _atomic_dump(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "version": "test-version",
             "trained_at": "2026-08-05T00:00:00+00:00",
             "models": {},

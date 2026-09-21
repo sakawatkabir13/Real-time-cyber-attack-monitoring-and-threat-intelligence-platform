@@ -124,6 +124,8 @@ Successful sends log `Delivered N log events`. Network failures stay in SQLite a
 
 ## 5. ML warm-up and monitoring
 
+For existing deployments, follow [the detection upgrade notes](docs/DETECTION_IMPROVEMENTS.md) before restarting: schema-3 models require new measured traffic windows, and the database needs migration `0003_detection_context`. That guide also configures actual request durations and documents investigation verdicts and related incidents.
+
 The system aggregates real traffic immediately, persists completed windows every minute, and attempts per-server model training daily at 03:30 UTC. It never falls back to synthetic training data. With the defaults, each scope needs 200 eligible windows for a server; low-volume servers can therefore take time to warm up.
 
 Review Settings for model version, active sample count, and window progress. To run maintenance immediately:

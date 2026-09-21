@@ -3,6 +3,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    ForeignKey,
     Integer,
     JSON,
     String,
@@ -42,5 +43,9 @@ class DdosAlert(Base):
     occurrence_count = Column(Integer, nullable=False, default=1)
     acknowledged_at = Column(DateTime(timezone=True))
     notes = Column(Text)
+    verdict = Column(String(32), nullable=False, default="unreviewed", server_default="unreviewed")
+    review_version = Column(Integer, nullable=False, default=0, server_default="0")
+    reviewed_at = Column(DateTime(timezone=True))
+    incident_group_id = Column(UUID(as_uuid=True), ForeignKey("incident_groups.id", ondelete="SET NULL"), index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

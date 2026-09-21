@@ -9,6 +9,7 @@ from app.models.threat_event import ThreatEvent
 from app.models.traffic_window import TrafficWindow
 from app.models.ddos_alert import DdosAlert
 from app.models.ml_model_run import MlModelRun
+from app.models.incident_group import IncidentGroup
 from app.tasks.celery_app import celery_app
 
 
@@ -29,6 +30,9 @@ async def _delete_expired_events() -> dict[str, int]:
             alerts = await session.execute(
                 delete(DdosAlert).where(DdosAlert.last_seen < cutoff)
             )
+            groups = await session.execute(
+                delete(IncidentGroup).where(IncidentGroup.last_seen < cutoff)
+            )
             model_runs = await session.execute(
                 delete(MlModelRun).where(
                     MlModelRun.trained_at < datetime.now(timezone.utc) - timedelta(days=90)
@@ -39,6 +43,7 @@ async def _delete_expired_events() -> dict[str, int]:
                 "events": result.rowcount or 0,
                 "windows": windows.rowcount or 0,
                 "alerts": alerts.rowcount or 0,
+                "incident_groups": groups.rowcount or 0,
                 "model_runs": model_runs.rowcount or 0,
             }
     finally:

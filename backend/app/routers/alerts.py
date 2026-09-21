@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.ddos_alert import DdosAlert
+from app.models.alert_review import AlertReview
+from app.schemas.alert import AlertReviewRequest
 from app.security import require_dashboard_auth
 from app.services.alert_service import serialize_alert
 from app.websocket_manager import manager
@@ -43,3 +45,35 @@ async def acknowledge_alert(alert_id: UUID, db: AsyncSession = Depends(get_db)):
     payload = serialize_alert(alert)
     await manager.broadcast_json({"type": "ALERT_UPDATED", "data": payload})
     return payload
+
+
+@router.patch("/{alert_id}/review")
+async def review_alert(alert_id: UUID, review: AlertReviewRequest, db: AsyncSession = Depends(get_db)):
+    alert = await db.scalar(select(DdosAlert).where(DdosAlert.id == alert_id).with_for_update())
+    if alert is None:
+        raise HTTPException(404, "Alert not found")
+    if alert.review_version != review.expected_version:
+        raise HTTPException(409, "Another review was saved. Reload before submitting again.")
+    alert.verdict = review.verdict
+    alert.notes = review.notes.strip()
+    alert.review_version += 1
+    alert.reviewed_at = datetime.now(timezone.utc)
+    db.add(AlertReview(alert_id=alert.id, version=alert.review_version, verdict=review.verdict,
+                       notes=alert.notes, reviewed_at=alert.reviewed_at))
+    # Verdicts do not silently acknowledge alerts, change training, or become
+    # evaluation ground truth. Those are separate decisions/workflows.
+    await db.commit()
+    payload = serialize_alert(alert)
+    await manager.broadcast_json({"type": "ALERT_UPDATED", "data": payload})
+    return payload
+
+
+@router.get("/{alert_id}/reviews")
+async def review_history(alert_id: UUID, db: AsyncSession = Depends(get_db)):
+    if await db.get(DdosAlert, alert_id) is None:
+        raise HTTPException(404, "Alert not found")
+    rows = await db.scalars(select(AlertReview).where(AlertReview.alert_id == alert_id)
+                            .order_by(desc(AlertReview.version)).limit(100))
+    return [{"version": row.version, "verdict": row.verdict, "notes": row.notes,
+             "reviewedBy": row.reviewed_by, "reviewedAt": row.reviewed_at.isoformat()}
+            for row in rows]

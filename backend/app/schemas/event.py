@@ -5,7 +5,7 @@ from datetime import datetime
 class ThreatEventBase(BaseModel):
     server_id: str
     timestamp: datetime
-    source_ip: str
+    source_ip: Optional[str] = None
     source_country: Optional[str] = None
     source_lat: Optional[float] = None
     source_lon: Optional[float] = None

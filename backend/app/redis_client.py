@@ -18,6 +18,18 @@ import redis.asyncio as redis
 from app.config import settings
 
 
+# Adjacent event-time buckets cover (timestamp - window, timestamp]. Expiry
+# uses receipt time so historical batches never mix with present-day traffic.
+EVENT_COUNT_SCRIPT = """
+if ARGV[5] == '1' then
+    redis.call('ZADD', KEYS[1], 'NX', ARGV[1], ARGV[4])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
+end
+return redis.call('ZCOUNT', KEYS[1], '(' .. ARGV[2], ARGV[1]) +
+       redis.call('ZCOUNT', KEYS[2], '(' .. ARGV[2], ARGV[1])
+"""
+
+
 class RedisClient:
     def __init__(self):
         self.redis = None
@@ -82,6 +94,24 @@ class RedisClient:
 
         # results[2] is the zcard (count after add)
         return int(results[2])
+
+    async def event_counts(
+        self, ip: str, *, server_id: str, timestamp: float,
+        event_id: str, counters: dict[str, bool], window_size: int = 300,
+    ) -> dict[str, int]:
+        """Detection counts; API security limits intentionally use wall time."""
+        bucket = int(timestamp // window_size)
+        prefix = f"event-rate:{self._key_part(server_id)}:{self._key_part(ip)}"
+        pipe = self._require_client().pipeline()
+        for scope, add in counters.items():
+            key = f"{prefix}:{self._key_part(scope)}"
+            pipe.eval(
+                EVENT_COUNT_SCRIPT, 2, f"{key}:{bucket}", f"{key}:{bucket - 1}",
+                timestamp, timestamp - window_size,
+                max(settings.EVENT_COUNTER_TTL_SECONDS, window_size * 2),
+                event_id, "1" if add else "0",
+            )
+        return dict(zip(counters, map(int, await pipe.execute())))
 
     async def allow_request(
         self, scope: str, identity: str, *, limit: int, window_size: int

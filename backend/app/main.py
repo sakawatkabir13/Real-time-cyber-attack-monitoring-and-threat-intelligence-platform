@@ -33,6 +33,7 @@ from app.redis_client import redis_client
 from app.routers.ingest import parse_event, router as ingest_router
 from app.routers.alerts import router as alerts_router
 from app.routers.collectors import router as collectors_router
+from app.routers.incidents import router as incidents_router
 from app.security import (
     SESSION_COOKIE,
     client_identifier,
@@ -48,6 +49,8 @@ from app.services.event_pipeline import PendingThreat, persist_threats, serializ
 from app.services.geo_lookup import geo_lookup
 from app.services.ml_engine import ml_engine
 from app.websocket_manager import manager
+from app.services.window_scoring import scoring_loop
+from app.services.incident_grouping import grouping_loop
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +59,14 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     settings.validate_production_secrets()
     await redis_client.connect()
+    workers = [asyncio.create_task(scoring_loop(), name="completed-window-scoring"),
+               asyncio.create_task(grouping_loop(), name="related-incident-grouping")]
     try:
         yield
     finally:
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
         await geo_lookup.close()
         await redis_client.close()
         await engine.dispose()
@@ -74,6 +82,7 @@ app = FastAPI(
 app.include_router(ingest_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(collectors_router, prefix="/api")
+app.include_router(incidents_router, prefix="/api")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -243,6 +252,7 @@ async def ml_status(db: AsyncSession = Depends(get_db)):
             select(TrafficWindow.server_id, func.count(TrafficWindow.id))
             .where(
                 TrafficWindow.scope == scope,
+                TrafficWindow.feature_schema == 3,
                 TrafficWindow.is_training_eligible.is_(True),
                 TrafficWindow.rule_threat_count == 0,
                 TrafficWindow.request_count >= minimum_requests,
@@ -262,6 +272,8 @@ async def ml_status(db: AsyncSession = Depends(get_db)):
     }
     payload["eligibleWindowsByServer"] = eligible_by_scope
     payload["minimumTrainingWindows"] = settings.ML_MIN_TRAINING_WINDOWS
+    payload["featureSchema"] = 3
+    payload["scorerLastSeen"] = await redis_client._require_client().get("ml:scorer:heartbeat")
     payload["recentRuns"] = [
         {
             "scope": run.scope,
@@ -276,7 +288,7 @@ async def ml_status(db: AsyncSession = Depends(get_db)):
     return payload
 
 
-_analysis_status: dict[str, object] = {"state": "idle", "processed": 0, "total": 0}
+_analysis_status: dict[str, object] = {"state": "idle", "processed": 0, "total": 0, "rejected": 0}
 
 
 async def _cached_abuse_lookup(ip: str) -> dict:
@@ -292,7 +304,7 @@ async def _cached_abuse_lookup(ip: str) -> dict:
 
 
 async def _process_uploaded_lines(lines: list[str]) -> None:
-    _analysis_status.update(state="running", processed=0, total=len(lines), error=None)
+    _analysis_status.update(state="running", processed=0, total=len(lines), rejected=0, error=None)
     try:
         for start in range(0, len(lines), 100):
             pending: list[PendingThreat] = []
@@ -303,6 +315,8 @@ async def _process_uploaded_lines(lines: list[str]) -> None:
                     detected = await detection_engine.process_log(log_entry)
                     if detected:
                         pending.append(PendingThreat(detected))
+                else:
+                    _analysis_status["rejected"] = int(_analysis_status["rejected"]) + 1
             async with AsyncSessionLocal() as db:
                 await persist_threats(db, pending)
             _analysis_status["processed"] = min(start + len(chunk), len(lines))
@@ -322,7 +336,7 @@ async def analyze_log_file(background_tasks: BackgroundTasks, file: UploadFile =
     if len(content) > settings.MAX_LOG_SIZE_BYTES:
         raise HTTPException(413, "Log file too large")
     lines = [line for line in content.decode("utf-8", errors="ignore").splitlines() if line.strip()]
-    _analysis_status.update(state="queued", processed=0, total=len(lines), error=None)
+    _analysis_status.update(state="queued", processed=0, total=len(lines), rejected=0, error=None)
     background_tasks.add_task(_process_uploaded_lines, lines)
     return {"status": "Analysis started", "lines": len(lines)}
 

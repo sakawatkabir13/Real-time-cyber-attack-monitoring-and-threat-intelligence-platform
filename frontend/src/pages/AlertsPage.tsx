@@ -2,6 +2,8 @@ import { useAppStore } from '@/store/appStore';
 import { cn } from '@/lib/utils';
 import { Bell, Check, AlertTriangle, ShieldAlert, Bot, type LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import AlertReviewForm from '@/components/AlertReviewForm';
+import RelatedIncidents from '@/components/RelatedIncidents';
 
 const alertIcons: Record<string, LucideIcon> = {
   port_scan: ShieldAlert,
@@ -36,6 +38,8 @@ export default function AlertsPage() {
           <span className="text-xs font-mono text-destructive">{unacked.length} ACTIVE</span>
         </div>
       </div>
+
+      <RelatedIncidents />
 
       <AnimatePresence mode="popLayout">
         {unacked.length === 0 && (
@@ -86,6 +90,8 @@ export default function AlertsPage() {
                 <p className="text-xs font-mono text-muted-foreground mt-1">
                   {new Date(alert.timestamp).toLocaleString()} • {alert.sourceIp}
                 </p>
+                {alert.incidentGroupId && <a href={`#incident-${alert.incidentGroupId}`} className="text-xs underline">View possible related incident</a>}
+                <AlertReviewForm alert={alert} />
               </div>
               <button
                 onClick={() => acknowledgeAlert(alert.id)}
@@ -104,8 +110,9 @@ export default function AlertsPage() {
             Acknowledged ({acked.length})
           </h2>
           {acked.map(alert => (
-            <div key={alert.id} className="border border-border/50 rounded-lg p-3 opacity-50">
+            <div key={alert.id} className="border border-border/50 rounded-lg p-3">
               <p className="text-xs font-mono text-muted-foreground">{alert.explanation || "Threat detected"}</p>
+              <AlertReviewForm alert={alert} />
             </div>
           ))}
         </div>

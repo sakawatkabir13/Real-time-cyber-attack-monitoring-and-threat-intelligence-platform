@@ -61,7 +61,7 @@ export function useThreatFeed() {
           const data = JSON.parse(event.data);
           if (data.type === 'NEW_THREAT') {
             setLiveEvent(data.data);
-            setEvents(prev => [data.data, ...prev].slice(0, 500));
+            setEvents(prev => [data.data, ...prev.filter(item => item.id !== data.data.id)].slice(0, 500));
             
           } else if (data.type === 'ALERT_CREATED' || data.type === 'ALERT_UPDATED') {
             useAppStore.getState().upsertAlert(data.data);

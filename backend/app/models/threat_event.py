@@ -11,7 +11,8 @@ class ThreatEvent(Base):
     ingest_event_id = Column(String(64), nullable=True)
     server_id = Column(String(64), nullable=False, index=True)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
-    source_ip = Column(String(45), nullable=False, index=True)
+    # Server-wide anomalies have no single source; never invent an attacker IP.
+    source_ip = Column(String(45), nullable=True, index=True)
     source_country = Column(String(2))
     source_lat = Column(Float)
     source_lon = Column(Float)

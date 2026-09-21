@@ -6,7 +6,7 @@ The external AgentBatch schema lives in app.routers.ingest because it accepts
 raw collector dictionaries before parsing.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LogEntry(BaseModel):
@@ -21,7 +21,9 @@ class LogEntry(BaseModel):
     path: str
     status_code: int
     bytes_sent: int
-    request_time: float
+    # Unknown is not a zero-second response. Durations are always seconds.
+    request_time: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     user_agent: str
     host: str
     server_id: str
+    event_id: str | None = None

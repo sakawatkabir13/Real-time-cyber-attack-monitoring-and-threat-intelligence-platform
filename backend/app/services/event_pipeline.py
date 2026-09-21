@@ -17,13 +17,14 @@ from app.websocket_manager import manager
 class PendingThreat:
     event: ThreatEventCreate
     ingest_event_id: str | None = None
+    replace_existing: bool = False
 
 
 def serialize_event(event: ThreatEvent) -> dict:
     return {
         "id": str(event.id),
         "server_id": event.server_id,
-        "source_ip": event.source_ip,
+        "source_ip": event.source_ip or "Multiple sources",
         "dest_ip": event.dest_ip,
         "dest_lat": event.dest_lat if event.dest_lat is not None else settings.TARGET_LATITUDE,
         "dest_lng": event.dest_lon if event.dest_lon is not None else settings.TARGET_LONGITUDE,
@@ -52,30 +53,33 @@ async def persist_threats(
         for item in items
         if item.ingest_event_id
     ]
-    existing: set[tuple[str, str]] = set()
+    existing: dict[tuple[str, str], ThreatEvent] = {}
     if event_keys:
         result = await db.execute(
-            select(ThreatEvent.server_id, ThreatEvent.ingest_event_id).where(
+            select(ThreatEvent).where(
                 tuple_(ThreatEvent.server_id, ThreatEvent.ingest_event_id).in_(event_keys)
             )
         )
-        existing = {(server_id, event_id) for server_id, event_id in result if event_id}
+        existing = {(row.server_id, row.ingest_event_id): row for row in result.scalars()}
         items = [
             item
             for item in items
-            if (item.event.server_id, item.ingest_event_id) not in existing
+            if item.replace_existing or (item.event.server_id, item.ingest_event_id) not in existing
         ]
     if not items:
         return []
 
     semaphore = asyncio.Semaphore(20)
 
-    async def lookup(ip: str) -> dict:
+    async def lookup(ip: str | None) -> dict:
+        if not ip:
+            return {}
         async with semaphore:
             return await geo_lookup.lookup(ip)
 
     geographies = await asyncio.gather(*(lookup(item.event.source_ip) for item in items))
     records: list[ThreatEvent] = []
+    revised_ids: set[int] = set()
     for item, geo in zip(items, geographies):
         event = item.event
         record = ThreatEvent(
@@ -98,13 +102,21 @@ async def persist_threats(
             source_lon=geo.get("lon"),
             source_country=geo.get("country"),
         )
-        db.add(record)
+        prior = existing.get((event.server_id, item.ingest_event_id))
+        if prior is not None:
+            # Re-scoring late data updates the same window finding, not a second incident.
+            for field in ("path", "severity", "anomaly_score", "explanation"):
+                setattr(prior, field, getattr(record, field))
+            record = prior
+            revised_ids.add(record.id)
+        else:
+            db.add(record)
         records.append(record)
 
     try:
         await db.flush()
         payloads = [serialize_event(record) for record in records]
-        alerts = await upsert_alerts(db, records)
+        alerts = await upsert_alerts(db, records, revised_event_ids=revised_ids)
         alert_payloads = [serialize_alert(alert) for alert in alerts]
         await db.commit()
     except Exception:

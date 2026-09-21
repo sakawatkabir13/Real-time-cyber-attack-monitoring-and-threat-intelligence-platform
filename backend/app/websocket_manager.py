@@ -29,7 +29,7 @@ class ConnectionManager:
 
         async def send(connection: WebSocket) -> WebSocket | None:
             try:
-                await connection.send_text(message)
+                await asyncio.wait_for(connection.send_text(message), timeout=5.0)
                 return None
             except Exception:
                 return connection

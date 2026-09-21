@@ -1,7 +1,5 @@
 """Authenticated, idempotent ingestion for remote log collectors."""
 
-import ipaddress
-import json
 import logging
 import re
 from typing import Any
@@ -13,71 +11,18 @@ from app.config import settings
 from app.database import AsyncSessionLocal
 from app.redis_client import redis_client
 from app.security import verify_collector_token
-from app.schemas.ingest import LogEntry
+from app.services.log_parser import parse_event
 from app.services.detection_engine import detection_engine
 from app.services.event_pipeline import PendingThreat, persist_threats
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-LOG_PATTERN = re.compile(
-    r'^(\S+) \S+ \S+ \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" (\d{3}) (\d+|-)(?:\s+"[^"]*"\s+"([^"]*)")?'
-)
-
-
 class AgentBatch(BaseModel):
     server_id: str = Field(default="unknown-agent", min_length=1, max_length=64)
     events: list[dict[str, Any]] = Field(
         min_length=1, max_length=settings.MAX_INGEST_BATCH_SIZE
     )
-
-
-def parse_event(event: dict[str, Any], server_id: str) -> LogEntry | None:
-    if len(json.dumps(event, default=str)) > 16_384:
-        return None
-
-    raw = event.get("raw_log")
-    if isinstance(raw, str):
-        match = LOG_PATTERN.match(raw)
-        if not match:
-            return None
-        ip, timestamp, method, path, status_code, bytes_sent, user_agent = match.groups()
-        try:
-            ipaddress.ip_address(ip)
-        except ValueError:
-            return None
-        return LogEntry(
-            server_id=server_id,
-            timestamp=timestamp,
-            source_ip=ip,
-            method=method,
-            path=path[:8192],
-            status_code=int(status_code),
-            bytes_sent=0 if bytes_sent == "-" else int(bytes_sent),
-            request_time=0.0,
-            user_agent=(user_agent or "Unknown")[:2048],
-            host="unknown",
-        )
-
-    ip = event.get("source_ip") or event.get("ip")
-    if not isinstance(ip, str):
-        return None
-    try:
-        ipaddress.ip_address(ip)
-        return LogEntry(
-            server_id=server_id,
-            timestamp=str(event.get("timestamp") or ""),
-            source_ip=ip,
-            method=str(event.get("method") or "GET")[:10],
-            path=str(event.get("path") or "/")[:8192],
-            status_code=int(event.get("status_code", 200)),
-            bytes_sent=int(event.get("bytes_sent") or 0),
-            request_time=float(event.get("request_time") or 0.0),
-            user_agent=str(event.get("user_agent") or "Unknown")[:2048],
-            host=str(event.get("host") or "unknown")[:255],
-        )
-    except (TypeError, ValueError):
-        return None
 
 
 @router.post("/ingest/batch", status_code=status.HTTP_202_ACCEPTED, tags=["Ingestion"])

@@ -45,6 +45,7 @@ def _select_training_rows(
         select(TrafficWindow)
         .where(
             TrafficWindow.scope == scope,
+            TrafficWindow.feature_schema == 3,
             TrafficWindow.server_id == server_id,
             TrafficWindow.window_start >= cutoff,
             TrafficWindow.is_training_eligible.is_(True),
@@ -193,7 +194,7 @@ def train_model_task() -> dict:
         if os.path.exists(settings.MODEL_PATH):
             try:
                 existing = joblib.load(settings.MODEL_PATH)
-                if isinstance(existing, dict) and existing.get("schema_version") == 2:
+                if isinstance(existing, dict) and existing.get("schema_version") == 3:
                     existing_models = dict(existing.get("models", {}))
             except Exception:
                 logger.warning("Existing model could not be retained", exc_info=True)
@@ -272,7 +273,7 @@ def train_model_task() -> dict:
                     if retained:
                         models[scope] = {"servers": retained}
                 bundle = {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "version": version,
                     "trained_at": datetime.now(timezone.utc).isoformat(),
                     "models": models,
