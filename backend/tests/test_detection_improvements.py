@@ -3,6 +3,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
+from tempfile import SpooledTemporaryFile
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -12,6 +14,7 @@ import fakeredis.aioredis
 import numpy as np
 import pytest
 import pytest_asyncio
+from fastapi import UploadFile
 from pydantic import ValidationError
 
 from app.config import DetectionProfile, settings
@@ -26,6 +29,8 @@ from app.services import window_scoring
 from app.services.ml_engine import MLEngine
 from app.services.ml_features import window_values
 from app.tasks import train_model
+from app.tasks import analyze_logs
+from app import main
 
 
 @pytest_asyncio.fixture
@@ -232,6 +237,55 @@ async def test_snapshot_failure_releases_lock_and_delays_retry(redis, monkeypatc
     assert await window_scoring.score_due_windows() == 0
     assert await redis.zscore(PENDING_WINDOWS, base) > time.time()
     assert await redis.get(f"ml:scoring-lock:{base}") is None
+
+
+@pytest.mark.asyncio
+async def test_manual_upload_is_queued_in_durable_shared_storage(monkeypatch, tmp_path):
+    class StatusRedis:
+        def __init__(self):
+            self.data = {}
+
+        async def get(self, key):
+            return self.data.get(key)
+
+        async def set(self, key, value, *, nx=False, ex=None):
+            if nx and key in self.data:
+                return False
+            self.data[key] = value
+            return True
+
+        async def setex(self, key, _ttl, value):
+            self.data[key] = value
+            return True
+
+        async def delete(self, key):
+            return int(self.data.pop(key, None) is not None)
+
+    queued = []
+    job_id = None
+    monkeypatch.setattr(redis_client, "redis", StatusRedis())
+    monkeypatch.setattr(settings, "ANALYSIS_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(main.analyze_log_file_task, "delay", lambda *args: queued.append(args))
+    try:
+        line = '203.0.113.7 - - [05/Aug/2026:00:00:01 +0000] "GET / HTTP/1.1" 200 10'
+        upload_stream = SpooledTemporaryFile()
+        upload_stream.write(line.encode())
+        upload_stream.seek(0)
+        response = await main.analyze_log_file(
+            UploadFile(file=upload_stream, filename="sample.log")
+        )
+        status = await main.analysis_status()
+        assert status["state"] == "queued" and status["total"] == 1
+        assert len(queued) == 1
+        job_id, path, total = queued[0]
+        assert job_id == response["jobId"] and total == 1
+        assert tmp_path in Path(path).parents
+        assert Path(path).read_text() == line
+    finally:
+        for upload in tmp_path.glob("*.log"):
+            upload.unlink()
+        if job_id:
+            await analyze_logs.release_active_analysis(job_id)
 
 
 def test_review_requires_a_verdict_evidence_and_concurrency_version():

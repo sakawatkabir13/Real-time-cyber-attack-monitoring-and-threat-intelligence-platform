@@ -58,6 +58,16 @@ describe('Alert investigations', () => {
     expect(await screen.findByText('Need origin logs')).toBeInTheDocument();
   });
 
+  it('persists a resolved alert state', async () => {
+    const resolved = { ...alert, status: 'resolved', acknowledged: true };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(resolved)),
+    );
+    expect(await useAppStore.getState().resolveAlert(alert.id)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith('/api/alerts/alert-1/resolve', { method: 'PATCH' });
+    expect(useAppStore.getState().alerts[0].status).toBe('resolved');
+  });
+
   it('presents groups as related evidence, not shared attacker attribution', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify([
       { id: 'group-1', serverId: 'web-a', type: 'brute_force', path: '/login', sourceCount: 3,

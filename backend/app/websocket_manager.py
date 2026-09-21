@@ -1,8 +1,16 @@
 import asyncio
 import json
+import logging
 from typing import Any
 
 from fastapi import WebSocket
+
+from app.redis_client import redis_client
+
+
+logger = logging.getLogger(__name__)
+WEBSOCKET_EVENT_CHANNEL = "vanguard:websocket-events"
+
 
 class ConnectionManager:
     def __init__(self):
@@ -41,5 +49,34 @@ class ConnectionManager:
 
     async def broadcast_json(self, data: dict[str, Any]):
         await self.broadcast(json.dumps(data))
+
+    async def publish_json(self, data: dict[str, Any]) -> None:
+        """Publish an event so the API process can relay it to its sockets."""
+        await redis_client._require_client().publish(
+            WEBSOCKET_EVENT_CHANNEL,
+            json.dumps(data),
+        )
+
+    async def relay_published(self) -> None:
+        """Relay events from API and Celery processes to local sockets."""
+        pubsub = redis_client._require_client().pubsub()
+        await pubsub.subscribe(WEBSOCKET_EVENT_CHANNEL)
+        try:
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                payload = message.get("data")
+                if isinstance(payload, bytes):
+                    payload = payload.decode("utf-8")
+                if isinstance(payload, str):
+                    await self.broadcast(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("WebSocket Redis relay stopped unexpectedly")
+            raise
+        finally:
+            await pubsub.unsubscribe(WEBSOCKET_EVENT_CHANNEL)
+            await pubsub.aclose()
 
 manager = ConnectionManager()

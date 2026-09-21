@@ -42,6 +42,7 @@ interface AppState {
   loadAlerts: () => Promise<void>;
   upsertAlert: (alert: BackendAlert) => void;
   acknowledgeAlert: (id: string) => Promise<boolean>;
+  resolveAlert: (id: string) => Promise<boolean>;
   reviewAlert: (id: string, verdict: ReviewVerdict, notes: string, expectedVersion: number) => Promise<string | null>;
   settings: {
     theme: 'dark' | 'light';
@@ -84,6 +85,22 @@ export const useAppStore = create<AppState>()(
             method: 'PATCH',
           });
           if (!response.ok) throw new Error(`Acknowledge failed (${response.status})`);
+          const alert = normalizeAlert(await response.json() as BackendAlert);
+          set((state) => ({
+            alerts: state.alerts.map((item) => item.id === id ? alert : item),
+          }));
+          return true;
+        } catch (error) {
+          console.error(error);
+          return false;
+        }
+      },
+      resolveAlert: async (id) => {
+        try {
+          const response = await fetch(`/api/alerts/${encodeURIComponent(id)}/resolve`, {
+            method: 'PATCH',
+          });
+          if (!response.ok) throw new Error(`Resolve failed (${response.status})`);
           const alert = normalizeAlert(await response.json() as BackendAlert);
           set((state) => ({
             alerts: state.alerts.map((item) => item.id === id ? alert : item),

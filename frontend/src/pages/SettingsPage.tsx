@@ -8,10 +8,27 @@ import { useEffect, useState } from 'react';
 interface MlStatus {
   state: 'warming_up' | 'ready';
   version?: string | null;
+  featureSchema?: number;
+  modelFresh?: boolean | null;
+  scorerLastSeen?: string | null;
+  grouperLastSeen?: string | null;
+  celeryPipelineLastSeen?: string | null;
+  collectorLastSeen?: string | null;
   eligibleWindows: Record<string, number>;
   minimumTrainingWindows: number;
   models: Record<string, { samples: number }>;
   eligibleWindowsByServer?: Record<string, Record<string, number>>;
+  recentRuns?: Array<{
+    scope: string; serverId: string; status: string; samples: number;
+    trainedAt?: string | null; error?: string | null;
+  }>;
+}
+
+function heartbeatTime(value?: string | null) {
+  if (!value) return 'No recent heartbeat';
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 'Invalid heartbeat';
+  return new Date(parsed * 1000).toLocaleString();
 }
 
 export default function SettingsPage() {
@@ -94,6 +111,11 @@ export default function SettingsPage() {
           <CardContent className="grid gap-3 sm:grid-cols-2 font-mono text-sm">
             <div>Status: <span className="text-primary">{mlStatus?.state ?? 'unavailable'}</span></div>
             <div>Version: <span className="text-muted-foreground">{mlStatus?.version ?? 'not trained'}</span></div>
+            <div>Feature schema: <span className="text-muted-foreground">{mlStatus?.featureSchema ?? '—'}</span></div>
+            <div>Model freshness: <span className="text-muted-foreground">{
+              mlStatus?.modelFresh === null || mlStatus?.modelFresh === undefined
+                ? 'warming up' : mlStatus.modelFresh ? 'current' : 'stale'
+            }</span></div>
             {(['server', 'source'] as const).map((scope) => (
               <div key={scope} className="rounded border border-border p-3">
                 <div className="uppercase text-xs text-muted-foreground">{scope} model</div>
@@ -107,6 +129,28 @@ export default function SettingsPage() {
                 </div>
               </div>
             ))}
+            <div className="rounded border border-border p-3 sm:col-span-2 grid gap-2 sm:grid-cols-2">
+              <div>Window scorer: <span className="text-muted-foreground">{heartbeatTime(mlStatus?.scorerLastSeen)}</span></div>
+              <div>Incident grouping: <span className="text-muted-foreground">{heartbeatTime(mlStatus?.grouperLastSeen)}</span></div>
+              <div>Celery Beat + worker: <span className="text-muted-foreground">{heartbeatTime(mlStatus?.celeryPipelineLastSeen)}</span></div>
+              <div>Collector last seen: <span className="text-muted-foreground">{
+                mlStatus?.collectorLastSeen ? new Date(mlStatus.collectorLastSeen).toLocaleString() : 'No collector heartbeat'
+              }</span></div>
+            </div>
+            {mlStatus?.recentRuns && mlStatus.recentRuns.length > 0 && (
+              <div className="rounded border border-border p-3 sm:col-span-2">
+                <div className="uppercase text-xs text-muted-foreground mb-2">Recent training runs</div>
+                <div className="space-y-1">
+                  {mlStatus.recentRuns.map((run, index) => (
+                    <div key={`${run.scope}-${run.serverId}-${run.trainedAt ?? index}`} className="break-words">
+                      {run.serverId} · {run.scope} · {run.status} · {run.samples} samples
+                      {run.trainedAt ? ` · ${new Date(run.trainedAt).toLocaleString()}` : ''}
+                      {run.error ? ` · ${run.error}` : ''}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -36,6 +36,7 @@ services:
         condition: service_healthy
     volumes:
       - model_data:/models
+      - analysis_data:/var/lib/vanguard/uploads
     env_file:
       - ${VANGUARD_ENV_FILE:-.env}
     environment:
@@ -56,6 +57,7 @@ services:
         condition: service_healthy
     volumes:
       - model_data:/models
+      - analysis_data:/var/lib/vanguard/uploads
     env_file:
       - ${VANGUARD_ENV_FILE:-.env}
     restart: unless-stopped
@@ -97,3 +99,4 @@ volumes:
   redis_data:
   model_data:
   celery_beat_data:
+  analysis_data:

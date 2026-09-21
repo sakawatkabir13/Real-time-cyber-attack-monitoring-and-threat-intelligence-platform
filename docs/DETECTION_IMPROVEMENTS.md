@@ -90,6 +90,20 @@ not establish precision, recall, or a false-positive rate.
    investigation aid, never attribution to one attacker. Default limits: latest
    500 source alerts in an hour, every 60 seconds. Source lists show at most 50 IPs.
 
+## Operational reliability added after the detection changes
+
+- Manual log uploads are queued to Celery and stored in a private shared volume.
+  Redis owns job progress, stable line IDs make redelivery idempotent, and a
+  backend restart no longer discards the job. Worker-produced findings are
+  relayed through Redis pub/sub to the API's live WebSocket clients.
+- `/api/health` reports diagnostic state for completed-window scoring, incident
+  grouping, the combined Celery Beat/worker path, model freshness, and collector
+  freshness while keeping PostgreSQL and Redis as the startup dependencies.
+- Settings displays these heartbeats, feature schema, model freshness, and recent
+  training results.
+- Alerts can now move from new to acknowledged to resolved. Investigation
+  verdicts remain separate from lifecycle status.
+
 ## Configure real response times on the monitored site
 
 The existing collector already forwards JSON lines. No new collector protocol

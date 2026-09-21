@@ -124,7 +124,7 @@ async def persist_threats(
         raise
 
     for payload in payloads:
-        await manager.broadcast_json({"type": "NEW_THREAT", "data": payload})
+        await manager.publish_json({"type": "NEW_THREAT", "data": payload})
     for payload in alert_payloads:
-        await manager.broadcast_json({"type": "ALERT_CREATED", "data": payload})
+        await manager.publish_json({"type": "ALERT_CREATED", "data": payload})
     return records

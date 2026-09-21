@@ -2,12 +2,14 @@ import asyncio
 import ipaddress
 import json
 import logging
+from pathlib import Path
+import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import (
-    BackgroundTasks,
     Depends,
     FastAPI,
     File,
@@ -28,9 +30,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import AsyncSessionLocal, engine, get_db
-from app.models import DdosAlert, MlModelRun, ThreatEvent, TrafficWindow
+from app.models import CollectorAgent, DdosAlert, MlModelRun, ThreatEvent, TrafficWindow
 from app.redis_client import redis_client
-from app.routers.ingest import parse_event, router as ingest_router
+from app.routers.ingest import router as ingest_router
 from app.routers.alerts import router as alerts_router
 from app.routers.collectors import router as collectors_router
 from app.routers.incidents import router as incidents_router
@@ -44,15 +46,44 @@ from app.security import (
     websocket_is_authenticated,
 )
 from app.services.abuseipdb import check_ip_abuse
-from app.services.detection_engine import detection_engine
-from app.services.event_pipeline import PendingThreat, persist_threats, serialize_event
+from app.services.event_pipeline import serialize_event
 from app.services.geo_lookup import geo_lookup
 from app.services.ml_engine import ml_engine
 from app.websocket_manager import manager
 from app.services.window_scoring import scoring_loop
 from app.services.incident_grouping import grouping_loop
+from app.tasks.analyze_logs import (
+    ACTIVE_ANALYSIS_KEY,
+    LATEST_ANALYSIS_KEY,
+    analyze_log_file_task,
+    analysis_status_key,
+    release_active_analysis,
+    save_analysis_status,
+)
+from app.tasks.health import CELERY_PIPELINE_HEARTBEAT
 
 logger = logging.getLogger(__name__)
+
+
+def _is_recent(value: str | None, maximum_age: float) -> bool:
+    if not value:
+        return False
+    try:
+        return time.time() - float(value) <= maximum_age
+    except (TypeError, ValueError):
+        return False
+
+
+def _model_is_fresh(status_payload: dict) -> bool | None:
+    if status_payload.get("state") != "ready":
+        return None
+    try:
+        trained_at = datetime.fromisoformat(str(status_payload["trained_at"]))
+        if trained_at.tzinfo is None:
+            trained_at = trained_at.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - trained_at <= timedelta(days=2)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 @asynccontextmanager
@@ -60,7 +91,8 @@ async def lifespan(_: FastAPI):
     settings.validate_production_secrets()
     await redis_client.connect()
     workers = [asyncio.create_task(scoring_loop(), name="completed-window-scoring"),
-               asyncio.create_task(grouping_loop(), name="related-incident-grouping")]
+               asyncio.create_task(grouping_loop(), name="related-incident-grouping"),
+               asyncio.create_task(manager.relay_published(), name="websocket-event-relay")]
     try:
         yield
     finally:
@@ -133,18 +165,50 @@ async def auth_status(request: Request):
 @app.get("/api/health")
 async def health():
     checks = {"redis": False, "database": False}
+    heartbeats: list[str | None] = [None, None, None]
+    collector_fresh = False
     try:
         checks["redis"] = await redis_client.ping()
+        heartbeats = await redis_client._require_client().mget(
+            "ml:scorer:heartbeat",
+            "incidents:grouper:heartbeat",
+            CELERY_PIPELINE_HEARTBEAT,
+        )
     except Exception:
         logger.exception("Redis health check failed")
     try:
         async with AsyncSessionLocal() as db:
             await db.execute(text("SELECT 1"))
             checks["database"] = True
+            latest_collector = await db.scalar(select(func.max(CollectorAgent.last_seen)))
+            if latest_collector is not None:
+                if latest_collector.tzinfo is None:
+                    latest_collector = latest_collector.replace(tzinfo=timezone.utc)
+                collector_fresh = latest_collector >= datetime.now(timezone.utc) - timedelta(
+                    seconds=settings.COLLECTOR_OFFLINE_SECONDS
+                )
     except Exception:
         logger.exception("Database health check failed")
     healthy = all(checks.values())
-    payload = {"status": "ok" if healthy else "degraded", "checks": checks}
+    model_status = ml_engine.status()
+    payload = {
+        "status": "ok" if healthy else "degraded",
+        "checks": checks,
+        # These are diagnostic signals, not startup dependencies. Celery cannot
+        # emit its first heartbeat until the backend is healthy and starts it.
+        "background": {
+            "windowScorer": _is_recent(
+                heartbeats[0], max(120, settings.ML_SCORING_INTERVAL_SECONDS * 3)
+            ),
+            "incidentGrouping": _is_recent(
+                heartbeats[1], max(180, settings.INCIDENT_GROUPING_INTERVAL_SECONDS * 3)
+            ),
+            "celeryBeatWorker": _is_recent(heartbeats[2], 120),
+            "modelState": model_status.get("state", "warming_up"),
+            "modelFresh": _model_is_fresh(model_status),
+            "collectorFresh": collector_fresh,
+        },
+    }
     return payload if healthy else JSONResponse(status_code=503, content=payload)
 
 
@@ -273,7 +337,17 @@ async def ml_status(db: AsyncSession = Depends(get_db)):
     payload["eligibleWindowsByServer"] = eligible_by_scope
     payload["minimumTrainingWindows"] = settings.ML_MIN_TRAINING_WINDOWS
     payload["featureSchema"] = 3
-    payload["scorerLastSeen"] = await redis_client._require_client().get("ml:scorer:heartbeat")
+    scorer, grouper, celery_pipeline = await redis_client._require_client().mget(
+        "ml:scorer:heartbeat",
+        "incidents:grouper:heartbeat",
+        CELERY_PIPELINE_HEARTBEAT,
+    )
+    payload["scorerLastSeen"] = scorer
+    payload["grouperLastSeen"] = grouper
+    payload["celeryPipelineLastSeen"] = celery_pipeline
+    payload["modelFresh"] = _model_is_fresh(payload)
+    latest_collector = await db.scalar(select(func.max(CollectorAgent.last_seen)))
+    payload["collectorLastSeen"] = latest_collector.isoformat() if latest_collector else None
     payload["recentRuns"] = [
         {
             "scope": run.scope,
@@ -288,9 +362,6 @@ async def ml_status(db: AsyncSession = Depends(get_db)):
     return payload
 
 
-_analysis_status: dict[str, object] = {"state": "idle", "processed": 0, "total": 0, "rejected": 0}
-
-
 async def _cached_abuse_lookup(ip: str) -> dict:
     client = redis_client._require_client()
     cache_key = f"abuse:lookup:{ip}"
@@ -303,47 +374,76 @@ async def _cached_abuse_lookup(ip: str) -> dict:
     return result
 
 
-async def _process_uploaded_lines(lines: list[str]) -> None:
-    _analysis_status.update(state="running", processed=0, total=len(lines), rejected=0, error=None)
-    try:
-        for start in range(0, len(lines), 100):
-            pending: list[PendingThreat] = []
-            chunk = lines[start : start + 100]
-            for line in chunk:
-                log_entry = parse_event({"raw_log": line}, "manual-upload")
-                if log_entry:
-                    detected = await detection_engine.process_log(log_entry)
-                    if detected:
-                        pending.append(PendingThreat(detected))
-                else:
-                    _analysis_status["rejected"] = int(_analysis_status["rejected"]) + 1
-            async with AsyncSessionLocal() as db:
-                await persist_threats(db, pending)
-            _analysis_status["processed"] = min(start + len(chunk), len(lines))
-            await asyncio.sleep(0)
-        _analysis_status["state"] = "complete"
-    except Exception as exc:
-        logger.exception("Uploaded log analysis failed")
-        _analysis_status.update(state="error", error=str(exc))
-
-
 @app.post("/api/analyze-log-file", dependencies=[Depends(require_dashboard_auth)])
-async def analyze_log_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    if _analysis_status.get("state") in {"queued", "running"}:
-        raise HTTPException(409, "A log analysis is already running")
+async def analyze_log_file(file: UploadFile = File(...)):
     content = await file.read(settings.MAX_LOG_SIZE_BYTES + 1)
     await file.close()
     if len(content) > settings.MAX_LOG_SIZE_BYTES:
         raise HTTPException(413, "Log file too large")
-    lines = [line for line in content.decode("utf-8", errors="ignore").splitlines() if line.strip()]
-    _analysis_status.update(state="queued", processed=0, total=len(lines), rejected=0, error=None)
-    background_tasks.add_task(_process_uploaded_lines, lines)
-    return {"status": "Analysis started", "lines": len(lines)}
+    total = sum(
+        1 for line in content.decode("utf-8", errors="ignore").splitlines() if line.strip()
+    )
+    if total == 0:
+        raise HTTPException(422, "Log file contains no non-empty lines")
+
+    client = redis_client._require_client()
+    active_job = await client.get(ACTIVE_ANALYSIS_KEY)
+    if active_job:
+        active_raw = await client.get(analysis_status_key(active_job))
+        try:
+            active_status = json.loads(active_raw) if active_raw else {}
+        except json.JSONDecodeError:
+            active_status = {}
+        if active_status.get("state") in {"queued", "running"}:
+            raise HTTPException(409, "A log analysis is already running")
+        await client.delete(ACTIVE_ANALYSIS_KEY)
+
+    job_id = uuid.uuid4().hex
+    if not await client.set(ACTIVE_ANALYSIS_KEY, job_id, nx=True, ex=86_400):
+        raise HTTPException(409, "A log analysis is already running")
+    upload_dir = Path(settings.ANALYSIS_UPLOAD_DIR).resolve()
+    path = upload_dir / f"{job_id}.log"
+    try:
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        # The upload is already bounded and resident in memory. A direct write
+        # avoids leaving an executor job behind if the API process shuts down.
+        path.write_bytes(content)
+        await save_analysis_status(
+            job_id,
+            state="queued",
+            processed=0,
+            total=total,
+            rejected=0,
+            error=None,
+        )
+        analyze_log_file_task.delay(job_id, str(path), total)
+    except Exception as exc:
+        path.unlink(missing_ok=True)
+        await save_analysis_status(
+            job_id,
+            state="error",
+            processed=0,
+            total=total,
+            rejected=0,
+            error="Could not queue log analysis",
+        )
+        await release_active_analysis(job_id)
+        logger.exception("Could not queue uploaded log analysis")
+        raise HTTPException(503, "Could not queue log analysis") from exc
+    return {"status": "Analysis queued", "jobId": job_id, "lines": total}
 
 
 @app.get("/api/analysis-status", dependencies=[Depends(require_dashboard_auth)])
 async def analysis_status():
-    return _analysis_status
+    raw = await redis_client._require_client().get(LATEST_ANALYSIS_KEY)
+    if not raw:
+        return {"state": "idle", "processed": 0, "total": 0, "rejected": 0}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error("Latest analysis status contains invalid JSON")
+        return {"state": "error", "processed": 0, "total": 0, "rejected": 0,
+                "error": "Stored analysis status is invalid"}
 
 
 @app.get("/api/ip-lookup/{ip}", dependencies=[Depends(require_dashboard_auth)])
@@ -411,7 +511,7 @@ async def analyze_threat(req: AIAnalysisRequest, request: Request, db: AsyncSess
         "ai_analysis", client_identifier(request), limit=5, window_size=60
     ):
         raise HTTPException(429, "AI analysis rate limit exceeded")
-    if not settings.GROQ_API_KEY:
+    if not settings.GROQ_API_KEY or settings.GROQ_API_KEY == "your_groq_api_key_here":
         raise HTTPException(503, "Groq analysis is not configured")
 
     result = await db.execute(
@@ -438,7 +538,7 @@ async def analyze_threat(req: AIAnalysisRequest, request: Request, db: AsyncSess
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": settings.GROQ_MODEL,
                     "messages": [
                         {"role": "system", "content": "You are a senior cybersecurity analyst."},
                         {"role": "user", "content": prompt},

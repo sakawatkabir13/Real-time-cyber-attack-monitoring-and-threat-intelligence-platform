@@ -1,5 +1,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
+from pathlib import Path
+import time
 
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -11,6 +14,9 @@ from app.models.ddos_alert import DdosAlert
 from app.models.ml_model_run import MlModelRun
 from app.models.incident_group import IncidentGroup
 from app.tasks.celery_app import celery_app
+
+
+logger = logging.getLogger(__name__)
 
 
 async def _delete_expired_events() -> dict[str, int]:
@@ -39,12 +45,26 @@ async def _delete_expired_events() -> dict[str, int]:
                 )
             )
             await session.commit()
+            removed_uploads = 0
+            upload_cutoff = time.time() - 2 * 86_400
+            upload_root = Path(settings.ANALYSIS_UPLOAD_DIR)
+            if upload_root.is_dir():
+                for upload in upload_root.glob("*.log"):
+                    try:
+                        if upload.stat().st_mtime < upload_cutoff:
+                            upload.unlink()
+                            removed_uploads += 1
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        logger.exception("Could not remove orphaned upload %s", upload)
             return {
                 "events": result.rowcount or 0,
                 "windows": windows.rowcount or 0,
                 "alerts": alerts.rowcount or 0,
                 "incident_groups": groups.rowcount or 0,
                 "model_runs": model_runs.rowcount or 0,
+                "orphaned_uploads": removed_uploads,
             }
     finally:
         await engine.dispose()

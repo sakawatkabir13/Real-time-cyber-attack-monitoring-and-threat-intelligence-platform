@@ -357,6 +357,7 @@ All variables are loaded from `.env` via `pydantic-settings`. Server-side secret
 | Variable | Required | Description |
 | --- | :---: | --- |
 | `ENVIRONMENT` | ✅ | `development` \| `production` — production refuses placeholder secrets |
+| `POSTGRES_PASSWORD` | ✅ | PostgreSQL password; must match the password encoded in `DATABASE_URL` |
 | `DATABASE_URL` | ✅ | Async PostgreSQL connection string |
 | `DATABASE_SSL` | ⚙️ | `true` when connecting through TLS |
 | `REDIS_URL` | ✅ | Redis connection string |
@@ -368,6 +369,8 @@ All variables are loaded from `.env` via `pydantic-settings`. Server-side secret
 | `COOKIE_SECURE` | ⚙️ | Must be `true` in production |
 | `ABUSEIPDB_API_KEY` | ⚙️ | Enables IP reputation enrichment |
 | `GROQ_API_KEY` | ⚙️ | Enables LLM-powered threat summaries |
+| `GROQ_MODEL` | ⚙️ | Groq model ID; default `openai/gpt-oss-120b` |
+| `ANALYSIS_UPLOAD_DIR` | ⚙️ | Shared durable storage for queued manual log jobs |
 | `MAXMIND_DB_PATH` | ⚙️ | Optional MaxMind GeoLite2-City.mmdb path |
 | `EVENT_RETENTION_DAYS` | ⚙️ | Default `30` |
 | `ALERT_DEDUPE_SECONDS` | ⚙️ | Default `900` |
@@ -390,6 +393,12 @@ A few variables deserve more explanation than a table row can give:
 - **`TARGET_LATITUDE` / `TARGET_LONGITUDE`** — the origin coordinate for the live world map's attack arcs. Set these to your server's geolocation so attack lines point at you, not at the equator.
 - **`ABUSEIPDB_API_KEY`** — without this, IP reputation enrichment silently falls back to "no data". The dashboard still works; the IP-lookup panel just shows blanks.
 - **`GROQ_API_KEY`** — without this, the AI-powered threat summary endpoint returns a graceful "AI disabled" message instead of a plain-language analysis.
+- **`GROQ_MODEL`** — selects the Groq-hosted model used for summaries. The deployment currently defaults to `openai/gpt-oss-120b`.
+
+Manual log uploads are copied to a private shared Docker volume and processed by
+Celery with late acknowledgement. Progress lives in Redis, so restarting the API
+does not discard an in-flight job. Stable per-line event IDs make a worker
+redelivery safe.
 
 ### 🔍 Detection Pipeline
 

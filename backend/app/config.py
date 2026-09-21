@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from urllib.parse import unquote, urlsplit
 
 
 class DetectionProfile(BaseModel):
@@ -17,6 +18,7 @@ class DetectionProfile(BaseModel):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     ENVIRONMENT: str = "development"
+    POSTGRES_PASSWORD: str = "change_me_strong_password"
     DATABASE_URL: str = "postgresql+asyncpg://vanguard:change_me_strong_password@postgres:5432/vanguardmap"
     DATABASE_SSL: bool = False
     REDIS_URL: str = "redis://redis:6379/0"
@@ -24,6 +26,7 @@ class Settings(BaseSettings):
     DASHBOARD_PASSWORD: str = "change_me_dashboard_password"
     ABUSEIPDB_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
     MODEL_PATH: str = "/models/behavioral_models.joblib"
     SECRET_KEY: str = "change_me_long_random_secret_for_jwt"
     CORS_ORIGINS: list[str] = []
@@ -31,6 +34,7 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = False
     SESSION_TTL_SECONDS: int = Field(default=43_200, ge=300, le=604_800)
     MAX_LOG_SIZE_BYTES: int = Field(default=50 * 1024 * 1024, ge=1024, le=1024**3)
+    ANALYSIS_UPLOAD_DIR: str = "/var/lib/vanguard/uploads"
     MAX_INGEST_BATCH_SIZE: int = Field(default=250, ge=1, le=5000)
     MAX_WEBSOCKET_CONNECTIONS: int = Field(default=200, ge=1, le=10_000)
     EVENT_RETENTION_DAYS: int = Field(default=30, ge=1, le=3650)
@@ -67,11 +71,22 @@ class Settings(BaseSettings):
         if self.ENVIRONMENT.lower() != "production":
             return
         insecure = {
+            "POSTGRES_PASSWORD": self.POSTGRES_PASSWORD,
             "COLLECTOR_TOKEN": self.COLLECTOR_TOKEN,
             "DASHBOARD_PASSWORD": self.DASHBOARD_PASSWORD,
             "SECRET_KEY": self.SECRET_KEY,
         }
         invalid = [name for name, value in insecure.items() if not value or value.startswith("change_me")]
+        try:
+            database_password = unquote(urlsplit(self.DATABASE_URL).password or "")
+        except ValueError:
+            database_password = ""
+        if (
+            not database_password
+            or database_password.startswith("change_me")
+            or database_password != self.POSTGRES_PASSWORD
+        ):
+            invalid.append("DATABASE_URL")
         if not self.COOKIE_SECURE:
             invalid.append("COOKIE_SECURE")
         if invalid:

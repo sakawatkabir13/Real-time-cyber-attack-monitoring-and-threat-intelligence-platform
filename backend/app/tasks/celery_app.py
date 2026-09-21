@@ -12,6 +12,8 @@ celery_app = Celery(
         "app.tasks.train_model",
         "app.tasks.cleanup_events",
         "app.tasks.flush_traffic_windows",
+        "app.tasks.analyze_logs",
+        "app.tasks.health",
     ]
 )
 
@@ -27,6 +29,10 @@ celery_app.conf.beat_schedule = {
     'delete-expired-events-daily': {
         'task': 'cleanup_events_task',
         'schedule': crontab(minute=15, hour=2),
+    },
+    'pipeline-heartbeat-every-30-seconds': {
+        'task': 'pipeline_heartbeat_task',
+        'schedule': 30.0,
     },
 }
 celery_app.conf.timezone = 'UTC'

@@ -1,10 +1,13 @@
 from datetime import timezone
+import json
 import stat
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
 
-from app.config import settings
+from app.config import Settings, settings
+from app.redis_client import redis_client
 from app.models.threat_event import ThreatEvent
 from app.models.traffic_window import TrafficWindow
 from app.routers.ingest import AgentBatch, parse_event
@@ -125,6 +128,25 @@ def test_production_rejects_non_secure_session_cookie(monkeypatch):
         settings.validate_production_secrets()
 
 
+def test_production_rejects_default_or_mismatched_database_password():
+    common = dict(
+        _env_file=None,
+        ENVIRONMENT="production",
+        COLLECTOR_TOKEN="collector-token",
+        DASHBOARD_PASSWORD="dashboard-password",
+        SECRET_KEY="session-signing-key",
+        COOKIE_SECURE=True,
+    )
+    with pytest.raises(RuntimeError, match="POSTGRES_PASSWORD"):
+        Settings(**common).validate_production_secrets()
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        Settings(
+            **common,
+            POSTGRES_PASSWORD="strong-database-password",
+            DATABASE_URL="postgresql+asyncpg://vanguard:different-password@postgres:5432/vanguardmap",
+        ).validate_production_secrets()
+
+
 @pytest.mark.asyncio
 async def test_unconfigured_abuseipdb_is_not_reported_as_clean(monkeypatch):
     monkeypatch.setattr(settings, "ABUSEIPDB_API_KEY", "")
@@ -152,6 +174,20 @@ async def test_websocket_broadcast_prunes_dead_connections():
     await manager.broadcast_json({"type": "test"})
     assert len(live.messages) == 1
     assert manager.active_connections == [live]
+
+
+@pytest.mark.asyncio
+async def test_websocket_publish_uses_redis_channel(monkeypatch):
+    client = AsyncMock()
+    monkeypatch.setattr(redis_client, "redis", client)
+    manager = ConnectionManager()
+
+    await manager.publish_json({"type": "test"})
+
+    client.publish.assert_awaited_once()
+    channel, message = client.publish.await_args.args
+    assert channel == "vanguard:websocket-events"
+    assert json.loads(message) == {"type": "test"}
 
 
 def test_model_artifact_is_cross_service_readable_and_bad_reload_keeps_last_good(

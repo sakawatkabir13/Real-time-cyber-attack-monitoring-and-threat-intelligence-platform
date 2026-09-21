@@ -37,6 +37,7 @@ BIND_ADDRESS=127.0.0.1
 HTTP_PORT=8080
 COOKIE_SECURE=true
 CORS_ORIGINS=[]
+GROQ_MODEL=openai/gpt-oss-120b
 ```
 
 Generate independent values with `openssl rand -hex 32`. Do not reuse the dashboard password as a collector or signing secret. Optional AbuseIPDB, Groq, and MaxMind values may remain blank.
@@ -52,7 +53,14 @@ docker compose ps
 curl http://127.0.0.1:8080/api/health
 ```
 
-The backend applies Alembic migrations before Uvicorn starts. Keep the supplied `--workers 1`: live WebSocket connections are process-local. Multiple API workers require Redis pub/sub or another shared broadcaster first.
+The backend applies Alembic migrations before Uvicorn starts. Keep the supplied
+`--workers 1`: the API also owns the completed-window scorer and incident-grouping
+loops. Redis pub/sub relays Celery findings into the API process for live WebSocket
+updates.
+
+The bundled Nginx trusts `X-Real-IP` only from localhost and Docker's private
+bridge range, then applies rate limits to the restored client address. Keep the
+published listener on `127.0.0.1`; do not expose port 8080 publicly.
 
 ## 3. Add HTTPS
 
@@ -128,15 +136,19 @@ For existing deployments, follow [the detection upgrade notes](docs/DETECTION_IM
 
 The system aggregates real traffic immediately, persists completed windows every minute, and attempts per-server model training daily at 03:30 UTC. It never falls back to synthetic training data. With the defaults, each scope needs 200 eligible windows for a server; low-volume servers can therefore take time to warm up.
 
-Review Settings for model version, active sample count, and window progress. To run maintenance immediately:
+Review Settings for model version, active sample count, window progress, scorer,
+grouping, Celery/Beat, and collector heartbeats. To run maintenance immediately:
 
 ```bash
 docker compose exec celery_worker python -c \
   "from app.tasks.flush_traffic_windows import flush_traffic_windows_task; print(flush_traffic_windows_task.run())"
 docker compose exec celery_worker python -c \
   "from app.tasks.train_model import train_model_task; print(train_model_task.run())"
-docker compose exec backend python evaluate_model.py --days 7
 ```
+
+The legacy `evaluate_model.py` command is not an independent accuracy test and
+is intentionally omitted here. Use separately labeled traffic before reporting
+precision, recall, or a false-positive rate.
 
 Do not reduce `ML_MIN_TRAINING_WINDOWS` merely to force a production model. First confirm there is enough representative traffic across normal busy/quiet periods. A model can be operationally ready while a newly added server remains in per-server warm-up.
 

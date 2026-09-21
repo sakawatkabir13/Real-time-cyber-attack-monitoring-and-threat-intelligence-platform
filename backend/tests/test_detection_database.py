@@ -109,6 +109,10 @@ async def test_ingest_quiet_windows_reviews_groups_and_late_revisions(monkeypatc
             assert (await http.patch(f"/api/alerts/{reviewed['id']}/review", json=review)).status_code == 409
             history = (await http.get(f"/api/alerts/{reviewed['id']}/reviews")).json()
             assert len(history) == 1 and history[0]["version"] == 1
+            resolved = await http.patch(f"/api/alerts/{reviewed['id']}/resolve")
+            assert resolved.status_code == 200
+            assert resolved.json()["status"] == "resolved"
+            assert resolved.json()["acknowledged"] is True
             await incident_grouping.group_recent_incidents()
             assert not [g for g in (await http.get("/api/incidents")).json() if g["serverId"] == server_id]
 
@@ -123,6 +127,7 @@ async def test_ingest_quiet_windows_reviews_groups_and_late_revisions(monkeypatc
                 result = await db.get(DdosAlert, uuid.UUID(reviewed["id"]))
                 assert result.occurrence_count == 1
                 assert result.verdict == "legitimate" and result.review_version == 1
+                assert result.status == "resolved"
     finally:
         app.dependency_overrides.clear()
         await client.aclose()

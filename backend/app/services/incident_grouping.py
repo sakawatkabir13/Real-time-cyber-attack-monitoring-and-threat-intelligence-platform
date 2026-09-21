@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
+import time
 from urllib.parse import urlsplit
 import uuid
 
@@ -145,6 +146,7 @@ async def group_recent_incidents() -> int:
                 if alert.id not in assigned:
                     alert.incident_group_id = None
             await db.commit()
+        await client.set("incidents:grouper:heartbeat", str(time.time()), ex=240)
         return len(clusters)
     finally:
         await client.eval(RELEASE_LOCK, 1, key, token)

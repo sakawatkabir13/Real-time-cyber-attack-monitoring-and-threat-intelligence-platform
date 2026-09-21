@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
-mkdir -p /models /var/lib/celery
-chown -R nobody:nogroup /models /var/lib/celery
+mkdir -p /models /var/lib/celery /var/lib/vanguard/uploads
+chown -R nobody:nogroup /models /var/lib/celery /var/lib/vanguard/uploads
 if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
   echo "Applying database migrations..."
   alembic upgrade head

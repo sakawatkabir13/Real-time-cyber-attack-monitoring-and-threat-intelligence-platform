@@ -18,13 +18,14 @@ const alertColors: Record<string, string> = {
 };
 
 export default function AlertsPage() {
-  const { alerts, acknowledgeAlert, settings } = useAppStore();
+  const { alerts, acknowledgeAlert, resolveAlert, settings } = useAppStore();
   const ranks = { low: 0, medium: 1, high: 2, critical: 3 };
   const visibleAlerts = alerts.filter((alert) =>
     ranks[alert.severity.toLowerCase() as keyof typeof ranks] >= ranks[settings.alertSensitivity]);
 
-  const unacked = visibleAlerts.filter(a => !a.acknowledged);
-  const acked = visibleAlerts.filter(a => a.acknowledged);
+  const unacked = visibleAlerts.filter(a => a.status === 'new');
+  const acked = visibleAlerts.filter(a => a.status === 'acknowledged');
+  const resolved = visibleAlerts.filter(a => a.status === 'resolved');
 
   return (
     <div className="p-6 space-y-6">
@@ -93,12 +94,20 @@ export default function AlertsPage() {
                 {alert.incidentGroupId && <a href={`#incident-${alert.incidentGroupId}`} className="text-xs underline">View possible related incident</a>}
                 <AlertReviewForm alert={alert} />
               </div>
-              <button
-                onClick={() => acknowledgeAlert(alert.id)}
-                className="shrink-0 px-3 py-1.5 text-xs font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              >
-                ACK
-              </button>
+              <div className="shrink-0 flex flex-col gap-2">
+                <button
+                  onClick={() => acknowledgeAlert(alert.id)}
+                  className="px-3 py-1.5 text-xs font-mono rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  ACK
+                </button>
+                <button
+                  onClick={() => resolveAlert(alert.id)}
+                  className="px-3 py-1.5 text-xs font-mono rounded border border-success/40 text-success hover:bg-success/10 transition-colors"
+                >
+                  RESOLVE
+                </button>
+              </div>
             </motion.div>
           );
         })}
@@ -110,7 +119,29 @@ export default function AlertsPage() {
             Acknowledged ({acked.length})
           </h2>
           {acked.map(alert => (
-            <div key={alert.id} className="border border-border/50 rounded-lg p-3">
+            <div key={alert.id} className="border border-border/50 rounded-lg p-3 flex gap-3">
+              <div className="flex-1">
+                <p className="text-xs font-mono text-muted-foreground">{alert.explanation || "Threat detected"}</p>
+                <AlertReviewForm alert={alert} />
+              </div>
+              <button
+                onClick={() => resolveAlert(alert.id)}
+                className="self-start px-3 py-1.5 text-xs font-mono rounded border border-success/40 text-success hover:bg-success/10"
+              >
+                RESOLVE
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {resolved.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
+            Resolved ({resolved.length})
+          </h2>
+          {resolved.map(alert => (
+            <div key={alert.id} className="border border-success/20 bg-success/5 rounded-lg p-3">
               <p className="text-xs font-mono text-muted-foreground">{alert.explanation || "Threat detected"}</p>
               <AlertReviewForm alert={alert} />
             </div>

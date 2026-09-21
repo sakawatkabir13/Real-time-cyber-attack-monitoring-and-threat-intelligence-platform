@@ -43,7 +43,24 @@ async def acknowledge_alert(alert_id: UUID, db: AsyncSession = Depends(get_db)):
         alert.acknowledged_at = datetime.now(timezone.utc)
         await db.commit()
     payload = serialize_alert(alert)
-    await manager.broadcast_json({"type": "ALERT_UPDATED", "data": payload})
+    await manager.publish_json({"type": "ALERT_UPDATED", "data": payload})
+    return payload
+
+
+@router.patch("/{alert_id}/resolve")
+async def resolve_alert(alert_id: UUID, db: AsyncSession = Depends(get_db)):
+    alert = await db.get(DdosAlert, alert_id)
+    if alert is None:
+        raise HTTPException(404, "Alert not found")
+    if alert.status != "resolved":
+        now = datetime.now(timezone.utc)
+        alert.status = "resolved"
+        alert.end_time = now
+        if alert.acknowledged_at is None:
+            alert.acknowledged_at = now
+        await db.commit()
+    payload = serialize_alert(alert)
+    await manager.publish_json({"type": "ALERT_UPDATED", "data": payload})
     return payload
 
 
@@ -64,7 +81,7 @@ async def review_alert(alert_id: UUID, review: AlertReviewRequest, db: AsyncSess
     # evaluation ground truth. Those are separate decisions/workflows.
     await db.commit()
     payload = serialize_alert(alert)
-    await manager.broadcast_json({"type": "ALERT_UPDATED", "data": payload})
+    await manager.publish_json({"type": "ALERT_UPDATED", "data": payload})
     return payload
 
 

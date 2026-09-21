@@ -6,6 +6,8 @@ export default function LogAnalyzerPage() {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [rejectedLines, setRejectedLines] = useState(0);
+  const [processedLines, setProcessedLines] = useState(0);
+  const [totalLines, setTotalLines] = useState(0);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'analyzing' | 'done' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -20,6 +22,8 @@ export default function LogAnalyzerPage() {
         const result = await response.json();
         if (cancelled) return;
         setRejectedLines(Number(result.rejected ?? 0));
+        setProcessedLines(Number(result.processed ?? 0));
+        setTotalLines(Number(result.total ?? 0));
         if (result.state === 'complete') setStatus('done');
         if (result.state === 'error') setStatus('error');
       } catch {
@@ -58,6 +62,8 @@ export default function LogAnalyzerPage() {
 
     setIsUploading(true);
     setRejectedLines(0);
+    setProcessedLines(0);
+    setTotalLines(0);
     setStatus('uploading');
 
     const formData = new FormData();
@@ -161,7 +167,9 @@ export default function LogAnalyzerPage() {
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
             <div>
               <p className="text-sm font-bold text-primary">Analysis in Progress...</p>
-              <p className="text-xs text-muted-foreground font-mono">The log file is being replayed to the Dashboard.</p>
+              <p className="text-xs text-muted-foreground font-mono">
+                {processedLines} / {totalLines || '—'} lines processed. The durable worker continues if the API restarts.
+              </p>
             </div>
           </div>
         )}
