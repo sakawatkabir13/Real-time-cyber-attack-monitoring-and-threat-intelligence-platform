@@ -17,6 +17,7 @@ from app.models.traffic_window import TrafficWindow
 from app.services.behavioral_features import (
     SNAPSHOT_SCRIPT, decode_snapshot, previous_key, values_from_snapshot,
 )
+from app.services.scanner_detection import is_directory_enumeration
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,13 @@ def flush_traffic_windows_task() -> int:
                 float(data["anomaly_score"]) if data.get("anomaly_score") else None
             )
             rule_threat_count = int(data.get("rule_threat_count", 0))
+            enumeration = is_directory_enumeration(
+                request_count=count,
+                unique_paths=cardinalities["unique_paths"],
+                top_path_share=values["top_path_share"],
+                request_rate=values["request_rate"],
+                peak_second_requests=values["peak_second_requests"],
+            )
             row = {
                 "feature_schema": int(data.get("feature_schema", 2)),
                 "server_id": data["server_id"],
@@ -91,7 +99,7 @@ def flush_traffic_windows_task() -> int:
                 "reporter_count": int(values["reporter_count"]),
                 "community_reports": int(values["community_reports"]),
                 "rule_threat_count": rule_threat_count,
-                "is_training_eligible": rule_threat_count == 0
+                "is_training_eligible": rule_threat_count == 0 and not enumeration
                 and (anomaly_score is None or anomaly_score < settings.ML_ALERT_SCORE),
                 "anomaly_score": anomaly_score,
                 "model_version": data.get("model_version") or None,

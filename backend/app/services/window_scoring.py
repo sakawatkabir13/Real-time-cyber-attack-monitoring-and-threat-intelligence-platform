@@ -17,6 +17,7 @@ from app.schemas.event import ThreatEventCreate
 from app.services.behavioral_features import PENDING_WINDOWS, behavioral_features, values_from_snapshot
 from app.services.event_pipeline import PendingThreat, persist_threats
 from app.services.ml_engine import ml_engine
+from app.services.scanner_detection import is_directory_enumeration
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +61,43 @@ async def score_window(base: str) -> bool:
         data, cardinalities, top = snapshot
         revision = int(data["request_count"])
         minimum = settings.ML_MIN_SERVER_REQUESTS if data["scope"] == "server" else settings.ML_MIN_SOURCE_REQUESTS
+        values = values_from_snapshot(data, cardinalities, top)
+        enumeration = (
+            data["scope"] == "source"
+            and int(data.get("rule_threat_count", 0)) == 0
+            and is_directory_enumeration(
+                request_count=revision,
+                unique_paths=cardinalities["unique_paths"],
+                top_path_share=values["top_path_share"],
+                request_rate=values["request_rate"],
+                peak_second_requests=values["peak_second_requests"],
+            )
+        )
+        if enumeration and data.get("scanner_scored_revision") != str(revision):
+            # Independent of ML availability: rule-level reconnaissance must
+            # still be visible while a new model is warming up.
+            if await client.hget(base, "request_count") != str(revision):
+                return False
+            start = int(data["window_start"])
+            event = ThreatEventCreate(
+                server_id=data["server_id"],
+                timestamp=datetime.fromtimestamp(start, timezone.utc),
+                source_ip=data.get("source_ip") or None,
+                path=data.get("top_path") or None,
+                attack_type="scanner", severity="medium", anomaly_score=75.0,
+                explanation=(f"Possible HTTP directory enumeration: {revision} requests "
+                             f"to about {int(cardinalities['unique_paths'])} distinct paths "
+                             f"in {data['window_seconds']} seconds. High path diversity and "
+                             "speed are indicators, not proof of hostile intent."),
+            )
+            async with AsyncSessionLocal() as db:
+                await persist_threats(db, [PendingThreat(event, "http-scan:" + hashlib.sha256(base.encode()).hexdigest()[:54])])
+            await client.hset(base, "scanner_scored_revision", revision)
         prediction = None
         if revision >= minimum:
             prediction = await asyncio.to_thread(
                 ml_engine.score, data["scope"], data["server_id"],
-                values_from_snapshot(data, cardinalities, top),
+                values,
             )
             if prediction is None:
                 # Retain pending work through model warm-up/restart. Expired
@@ -81,7 +114,7 @@ async def score_window(base: str) -> bool:
             return False
         if prediction is not None:
             actionable = (int(data.get("rule_threat_count", 0)) == 0
-                          and prediction.score >= settings.ML_ALERT_SCORE)
+                          and not enumeration and prediction.score >= settings.ML_ALERT_SCORE)
             identity = window_event_id(base)
             async with AsyncSessionLocal() as db:
                 prior = await db.scalar(select(ThreatEvent.id).where(

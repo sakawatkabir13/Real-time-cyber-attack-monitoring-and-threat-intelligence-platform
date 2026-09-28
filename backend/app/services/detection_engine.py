@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 _SQL_RE = re.compile(
     r"(union[\s\+]+(?:all[\s\+]+)?select|select.{0,20}from|insert[\s\+]+into|"
     r"update.{0,20}set[\s\+]|delete[\s\+]+from|drop[\s\+]+(?:table|database)|"
-    r"exec(?:ute)?[\s\+(]|xp_\w+|benchmark[\s\+(]|sleep[\s\+(]|"
+    r"exec(?:ute)?[\s\+(]|(?<!\w)xp_(?:cmdshell|dirtree|fileexist|regread|regwrite)\b|benchmark[\s\+(]|sleep[\s\+(]|"
     r"waitfor[\s\+]+delay|'\s*(?:or|and)\s*'|--\s|;\s*(?:drop|select|insert)|"
     r"/\*.*?\*/|0x[0-9a-f]{4,})",
     re.IGNORECASE,
@@ -67,7 +67,7 @@ _TRAVERSAL_RE = re.compile(
 _SCANNER_UA_RE = re.compile(
     r"(sqlmap|nikto|nmap|masscan|metasploit|nessus|openvas|"
     r"w3af|acunetix|ibm\s*appscan|dirbuster|gobuster|ffuf|"
-    r"wfuzz|nuclei|whatweb|shodan|zgrab|censys)",
+    r"wfuzz|nuclei|whatweb|shodan|zgrab|censys|feroxbuster)",
     re.IGNORECASE,
 )
 
@@ -150,6 +150,15 @@ class DetectionEngine:
             community_reports=int(ip_data.get("community_reports", 0) or 0),
         )
         # Completed windows are scored independently of future requests.
+        if rule_event is not None and rule_event.attack_type == "scanner":
+            # Persist only one scanner finding per source/server five-minute
+            # period. Every request still marks its windows as rule-affected.
+            bucket = int(dt.timestamp() // 300)
+            key = (f"scanner:finding:{redis_client._key_part(log.server_id)}:"
+                   f"{redis_client._key_part(log.source_ip)}:{bucket}")
+            first = await client.set(key, log.event_id, ex=8 * 86_400, nx=True)
+            if not first and await client.get(key) != log.event_id:
+                return None
         return rule_event
 
     async def _detect_rule(

@@ -27,6 +27,7 @@ from app.services.ml_features import (
     transform_vector,
     window_values,
 )
+from app.services.scanner_detection import is_directory_enumeration
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,15 @@ def _select_training_rows(
     counts: defaultdict[tuple[str, str], int] = defaultdict(int)
     selected: list[TrafficWindow] = []
     for row in candidates:
+        # Protect older rows whose eligibility was stored before this check.
+        if is_directory_enumeration(
+            request_count=row.request_count or 0,
+            unique_paths=row.unique_paths or 0,
+            top_path_share=row.top_path_share if row.top_path_share is not None else 1.0,
+            request_rate=row.request_rate or 0,
+            peak_second_requests=row.peak_second_requests or 0,
+        ):
+            continue
         identity = (row.server_id, row.entity_key)
         if counts[identity] >= per_entity_limit:
             continue
