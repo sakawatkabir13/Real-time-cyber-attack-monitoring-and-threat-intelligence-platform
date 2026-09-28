@@ -27,7 +27,7 @@ function event(id: string, lat: number, lng: number): ThreatEvent {
     id,
     server_id: 'spandan-web',
     source_ip: id,
-    dest_port: 80,
+    dest_port: null,
     attack_type: 'scanner',
     severity: 'medium',
     country: 'Unknown',

@@ -5,6 +5,7 @@ import { useAppStore } from '../store/appStore';
 export default function AlertQueue() {
   const alerts = useAppStore((state) => state.alerts);
   const sensitivity = useAppStore((state) => state.settings.alertSensitivity);
+  const loading = useAppStore((state) => state.alertsLoading);
   const ranks = { low: 0, medium: 1, high: 2, critical: 3 };
   const visibleAlerts = alerts.filter((alert) =>
     !alert.acknowledged
@@ -18,7 +19,11 @@ export default function AlertQueue() {
       </div>
       <div className="flex-1 overflow-y-auto space-y-2 pr-2">
         {visibleAlerts.length === 0 ? (
-          <div className="text-xs text-muted-foreground font-mono text-center mt-10">No recent alerts</div>
+          <div className="text-xs text-muted-foreground font-mono text-center mt-10">
+            {loading ? 'Loading alerts…' : alerts.some((alert) => !alert.acknowledged)
+              ? 'No new alerts at this sensitivity'
+              : 'No new alerts'}
+          </div>
         ) : (
           visibleAlerts.map((alert) => (
             <div key={alert.id} className="text-xs font-mono py-2 px-2 bg-background/50 border border-border/50 rounded-md">
@@ -30,7 +35,7 @@ export default function AlertQueue() {
                 }>{alert.severity}</span>
                 <span className="text-muted-foreground">{new Date(alert.timestamp).toLocaleTimeString()}</span>
               </div>
-              <div className="text-slate-300 mb-1">{alert.type} - {alert.sourceIp} → {alert.targetIp}</div>
+              <div className="text-slate-300 mb-1">{alert.type.replace(/_/g, ' ')} · {alert.sourceIp} · Server: {alert.serverId}</div>
               {alert.explanation && (
                 <div className="text-[10px] text-muted-foreground italic border-t border-border/50 pt-1 mt-1">
                   {alert.explanation}

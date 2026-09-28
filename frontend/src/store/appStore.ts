@@ -7,7 +7,7 @@ export interface Alert {
   id: string;
   serverId: string;
   sourceIp: string;
-  targetIp: string;
+  targetIp?: string | null;
   type: string;
   severity: 'Low' | 'Medium' | 'High' | 'Critical';
   status: 'new' | 'acknowledged' | 'resolved';

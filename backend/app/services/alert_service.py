@@ -40,7 +40,7 @@ def serialize_alert(alert: DdosAlert) -> dict:
         "id": str(alert.id),
         "serverId": alert.server_id,
         "sourceIp": alert.source_ip or "Multiple sources",
-        "targetIp": alert.server_id,
+        "targetIp": None,
         "type": alert.attack_type,
         "severity": alert.severity,
         "status": alert.status,

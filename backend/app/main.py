@@ -238,10 +238,16 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/api/events", dependencies=[Depends(require_dashboard_auth)])
 async def get_events(
     limit: int = Query(default=100, ge=1, le=500),
+    ml_only: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
+    query = select(ThreatEvent)
+    if ml_only:
+        query = query.where(ThreatEvent.attack_type.in_((
+            "server_traffic_anomaly", "source_behavior_anomaly"
+        )))
     result = await db.execute(
-        select(ThreatEvent).order_by(desc(ThreatEvent.timestamp)).limit(limit)
+        query.order_by(desc(ThreatEvent.timestamp)).limit(limit)
     )
     return [serialize_event(event) for event in result.scalars()]
 
@@ -266,44 +272,48 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
     )
     types_result = await db.execute(
         select(ThreatEvent.attack_type, func.count(ThreatEvent.id))
-        .where(ThreatEvent.timestamp >= cutoff)
+        .where(ThreatEvent.timestamp >= cutoff, ThreatEvent.timestamp < now)
         .group_by(ThreatEvent.attack_type)
         .order_by(desc(func.count(ThreatEvent.id)))
-        .limit(5)
     )
+    hour_bin = func.date_bin(text("INTERVAL '1 hour'"), ThreatEvent.timestamp, cutoff)
     hour_result = await db.execute(
-        select(
-            func.date_trunc("hour", ThreatEvent.timestamp).label("hour_bin"),
-            func.count(ThreatEvent.id),
-        )
-        .where(ThreatEvent.timestamp >= cutoff)
+        select(hour_bin.label("hour_bin"), func.count(ThreatEvent.id))
+        .where(ThreatEvent.timestamp >= cutoff, ThreatEvent.timestamp < now)
         .group_by("hour_bin")
         .order_by("hour_bin")
     )
     recent_result = await db.execute(
-        select(func.count(ThreatEvent.id)).where(ThreatEvent.timestamp >= minute_ago)
+        select(func.count(ThreatEvent.id)).where(
+            ThreatEvent.timestamp >= minute_ago, ThreatEvent.timestamp < now
+        )
     )
 
-    counts: dict[datetime, int] = {}
+    counts: dict[int, int] = {}
     for hour, count in hour_result.all():
         if hour:
             normalized = hour.replace(tzinfo=hour.tzinfo or timezone.utc).astimezone(timezone.utc)
-            counts[normalized] = count
-    current_hour = now.replace(minute=0, second=0, microsecond=0)
-    hourly = []
-    for offset in range(23, -1, -1):
-        hour = current_hour - timedelta(hours=offset)
-        hourly.append({"hour": hour.strftime("%H:00"), "count": counts.get(hour, 0)})
+            index = int((normalized - cutoff).total_seconds() // 3600)
+            if 0 <= index < 24:
+                counts[index] = count
+    hourly = [
+        {"hour": (cutoff + timedelta(hours=index)).isoformat(), "count": counts.get(index, 0)}
+        for index in range(24)
+    ]
+    type_counts = [
+        {"type": attack_type or "unknown", "count": count}
+        for attack_type, count in types_result.all()
+    ]
+    top_types = type_counts[:5]
+    if len(type_counts) > 5:
+        top_types.append({"type": "other", "count": sum(row["count"] for row in type_counts[5:])})
 
     payload = {
         "totalThreats": total_result.scalar() or 0,
         "attacksPerSecond": round((recent_result.scalar() or 0) / 60.0, 2),
         "criticalAlerts": critical_result.scalar() or 0,
         "uniqueIPs": ips_result.scalar() or 0,
-        "topAttackTypes": [
-            {"type": attack_type or "unknown", "count": count}
-            for attack_type, count in types_result.all()
-        ],
+        "topAttackTypes": top_types,
         "threatsByHour": hourly,
     }
     await client.setex("dashboard:stats", 5, json.dumps(payload))

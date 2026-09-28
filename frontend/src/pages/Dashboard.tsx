@@ -11,21 +11,17 @@ import { useMemo } from 'react';
 import CollectorControl from '@/components/CollectorControl';
 
 export default function Dashboard() {
-  const { events, stats, liveEvent } = useThreatFeed();
+  const { events, mlEvents, stats, liveEvent } = useThreatFeed();
 
   const anomalyData = useMemo(() => {
-    if (events.length === 0) return [];
-    
-    // Take the last 20 events with an anomaly score and map them for the chart
-    return [...events]
-      .filter(e => e.anomaly_score !== undefined && e.anomaly_score !== null)
-      .slice(0, 20)
+    return [...mlEvents]
+      .filter((event) => event.anomaly_score !== undefined && event.anomaly_score !== null)
       .reverse()
-      .map(e => ({
-        time: new Date(e.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        score: Math.round(e.anomaly_score || 0),
+      .map((event) => ({
+        time: new Date(event.timestamp).toLocaleString(),
+        score: Math.round(event.anomaly_score!),
       }));
-  }, [events]);
+  }, [mlEvents]);
 
   return (
     <div className="p-6 space-y-6">
@@ -40,10 +36,9 @@ export default function Dashboard() {
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          title="Attacks/sec"
+          title="Detections/sec"
           value={stats.attacksPerSecond}
           icon={<Activity className="h-5 w-5" />}
-          trend={stats.attacksPerSecond > 5 ? `+${stats.attacksPerSecond}` : undefined}
           variant={stats.attacksPerSecond > 10 ? 'danger' : 'default'}
         />
         <StatCard
