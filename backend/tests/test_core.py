@@ -128,7 +128,9 @@ def test_production_rejects_non_secure_session_cookie(monkeypatch):
         settings.validate_production_secrets()
 
 
-def test_production_rejects_default_or_mismatched_database_password():
+def test_production_rejects_default_or_mismatched_database_password(monkeypatch):
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     common = dict(
         _env_file=None,
         ENVIRONMENT="production",
