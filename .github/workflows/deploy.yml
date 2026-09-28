@@ -33,6 +33,7 @@ jobs:
           ssh -i "$key_dir/key" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$key_dir/known_hosts" "ubuntu@$VPS_HOST" "EXPECTED_SHA='$GITHUB_SHA' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /var/www/vanguard-360
+          umask 077
           test -z "$(git -c core.fileMode=false status --porcelain)"
           git fetch origin main
           test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_SHA"
