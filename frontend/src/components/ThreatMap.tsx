@@ -19,6 +19,12 @@ const severityColors: Record<string, string> = {
 
 export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
   const [liveDots, setLiveDots] = useState<ThreatEvent[]>([]);
+  const targetEvent = liveEvent?.dest_lat != null && liveEvent.dest_lng != null
+    ? liveEvent
+    : events.find((event) => event.dest_lat != null && event.dest_lng != null);
+  const targetCoordinates: [number, number] | null = targetEvent?.dest_lat != null && targetEvent.dest_lng != null
+    ? [targetEvent.dest_lng, targetEvent.dest_lat]
+    : null;
 
   useEffect(() => {
     if (liveEvent) {
@@ -74,20 +80,18 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
               />
             </Marker>
           ))}
-
           <AnimatePresence>
             {liveDots.map((dot, i) => {
               if (dot.lat === null || dot.lng === null) return null;
               const color = severityColors[dot.severity] || severityColors.low;
               const isRecent = i < 5;
-              const hasTarget = dot.dest_lat != null && dot.dest_lng != null;
               return (
                 <g key={`group-${dot.id}`}>
                   {/* Arc to target */}
-                  {isRecent && hasTarget && (
+                  {isRecent && targetCoordinates && (
                     <Line
                       from={[dot.lng, dot.lat]}
-                      to={[dot.dest_lng, dot.dest_lat]}
+                      to={targetCoordinates}
                       stroke={color}
                       strokeWidth={1.5}
                       strokeLinecap="round"
@@ -132,6 +136,17 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
             })}
             
           </AnimatePresence>
+
+          {targetCoordinates && (
+            <Marker coordinates={targetCoordinates}>
+              <circle r={9} fill="none" stroke="#00f3ff" strokeWidth={1} opacity={0.45} />
+              <circle r={4} fill="#00f3ff" stroke="#ffffff" strokeWidth={1} />
+              <text y={-14} textAnchor="middle" fill="#00f3ff" fontSize={9} fontWeight="bold">
+                MONITORED SERVER
+              </text>
+            </Marker>
+          )}
+
         </ZoomableGroup>
       </ComposableMap>
     </div>

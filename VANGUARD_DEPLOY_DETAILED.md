@@ -124,11 +124,11 @@ HTTP_PORT=8080
 # to the internet directly. Host Nginx is the only thing allowed to talk
 # to it, same security pattern as CinemaSeat's api/gateway containers.
 
-# ── Map coordinates — your server's physical location ──────────────────
-TARGET_LATITUDE=23.8103
-TARGET_LONGITUDE=90.4125
-# Bangladesh/Dhaka coordinates — attack arcs on the live map point here.
-# Change if your server is physically located elsewhere.
+# ── Map coordinates — monitored server's approximate hosting region ─────
+TARGET_LATITUDE=39.0469
+TARGET_LONGITUDE=-77.4903
+# Example for this AWS us-east-1 VPS near Ashburn, Virginia. Do not use the
+# dashboard operator's location; these are the attack arcs' destinations.
 
 # ── Threat intelligence (optional but recommended) ─────────────────────
 ABUSEIPDB_API_KEY=

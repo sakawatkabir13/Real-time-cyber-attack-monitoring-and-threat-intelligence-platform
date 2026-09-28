@@ -390,7 +390,7 @@ A few variables deserve more explanation than a table row can give:
 - **`COOKIE_SECURE`** — must be `true` in production. The backend will refuse to boot otherwise (see `validate_production_secrets` in `backend/app/config.py`).
 - **`ML_MIN_TRAINING_WINDOWS`** — controls when the behavioural IsolationForest models engage. Set this too low and you train on noise; too high and you have no ML coverage during early deployment.
 - **`ML_ALERT_SCORE`** — the anomaly-score threshold (0–100) above which a flagged event becomes a persisted ML alert. Tune this in tandem with `ML_CONTAMINATION`.
-- **`TARGET_LATITUDE` / `TARGET_LONGITUDE`** — the origin coordinate for the live world map's attack arcs. Set these to your server's geolocation so attack lines point at you, not at the equator.
+- **`TARGET_LATITUDE` / `TARGET_LONGITUDE`** — the destination coordinate for the live world map's attack arcs. Set these to the monitored server's approximate hosting location; arcs show geographic endpoints, not the packets' actual network route.
 - **`ABUSEIPDB_API_KEY`** — without this, IP reputation enrichment silently falls back to "no data". The dashboard still works; the IP-lookup panel just shows blanks.
 - **`GROQ_API_KEY`** — without this, the AI-powered threat summary endpoint returns a graceful "AI disabled" message instead of a plain-language analysis.
 - **`GROQ_MODEL`** — selects the Groq-hosted model used for summaries. The deployment currently defaults to `openai/gpt-oss-120b`.
