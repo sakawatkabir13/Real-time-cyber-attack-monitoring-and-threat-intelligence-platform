@@ -3,6 +3,7 @@ import ipaddress
 import json
 import logging
 from pathlib import Path
+import shutil
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -49,7 +50,7 @@ from app.services.abuseipdb import check_ip_abuse
 from app.services.event_pipeline import serialize_event
 from app.services.geo_lookup import geo_lookup
 from app.services.ml_engine import ml_engine
-from app.websocket_manager import manager
+from app.websocket_manager import WEBSOCKET_RELAY_HEARTBEAT, manager
 from app.services.window_scoring import scoring_loop
 from app.services.incident_grouping import grouping_loop
 from app.tasks.analyze_logs import (
@@ -165,7 +166,7 @@ async def auth_status(request: Request):
 @app.get("/api/health")
 async def health():
     checks = {"redis": False, "database": False}
-    heartbeats: list[str | None] = [None, None, None]
+    heartbeats: list[str | None] = [None, None, None, None]
     collector_fresh = False
     try:
         checks["redis"] = await redis_client.ping()
@@ -173,6 +174,7 @@ async def health():
             "ml:scorer:heartbeat",
             "incidents:grouper:heartbeat",
             CELERY_PIPELINE_HEARTBEAT,
+            WEBSOCKET_RELAY_HEARTBEAT,
         )
     except Exception:
         logger.exception("Redis health check failed")
@@ -191,12 +193,15 @@ async def health():
         logger.exception("Database health check failed")
     healthy = all(checks.values())
     model_status = ml_engine.status()
+    disk = shutil.disk_usage("/")
     payload = {
         "status": "ok" if healthy else "degraded",
         "checks": checks,
         # These are diagnostic signals, not startup dependencies. Celery cannot
         # emit its first heartbeat until the backend is healthy and starts it.
         "background": {
+            "websocketRelay": _is_recent(heartbeats[3], 30),
+            "diskUsedPercent": round(100 * disk.used / disk.total, 1),
             "windowScorer": _is_recent(
                 heartbeats[0], max(120, settings.ML_SCORING_INTERVAL_SECONDS * 3)
             ),

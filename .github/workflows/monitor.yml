@@ -1,0 +1,31 @@
+name: Production health monitor
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: vanguard-production-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: ${{ vars.VANGUARD_MONITOR_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - run: python ops/monitor.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VANGUARD_HEALTH_URL: https://vanguard.cuetinsights.dev/api/health
+          MONITOR_EMAIL_FROM: community.cuetinsights@gmail.com
+          MONITOR_EMAIL_TO: sakawatkabir13@gmail.com
+          MONITOR_SMTP_USER: community.cuetinsights@gmail.com
+          MONITOR_SMTP_APP_PASSWORD: ${{ secrets.MONITOR_SMTP_APP_PASSWORD }}

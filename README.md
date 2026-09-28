@@ -410,7 +410,7 @@ Every ingested event is evaluated in order:
 
 Detected suspicious events are persisted, not every normal request. Traffic summaries retain normal activity for training. A finding is not proof of an attack: human investigation records the outcome. High/critical events and ML findings create deduplicated alerts.
 
-See [detection improvements and upgrade instructions](docs/DETECTION_IMPROVEMENTS.md) for the schema-3 model transition, response-time logging, contextual thresholds, and bounded incident grouping. Independent model-accuracy evaluation has not been added.
+See [detection improvements](docs/DETECTION_IMPROVEMENTS.md) for schema-3 features and the model transition, and [operations and evaluation](docs/OPERATIONS_IMPROVEMENTS.md) for independent-label evaluation, external monitoring, optional local geolocation, CI, and deployment. Accuracy metrics still require a real labeled holdout.
 
 ---
 

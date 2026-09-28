@@ -1,0 +1,53 @@
+name: Deploy production (manual)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy tested commit over verified SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          test -n "$VPS_SSH_KNOWN_HOSTS"
+          key_dir="$(mktemp -d)"
+          trap 'rm -f "$key_dir/key" "$key_dir/known_hosts"; rmdir "$key_dir"' EXIT
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$key_dir/key"
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$key_dir/known_hosts"
+          chmod 600 "$key_dir/key" "$key_dir/known_hosts"
+          ssh -i "$key_dir/key" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$key_dir/known_hosts" "ubuntu@$VPS_HOST" "EXPECTED_SHA='$GITHUB_SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /var/www/vanguard-360
+          test -z "$(git -c core.fileMode=false status --porcelain)"
+          git fetch origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_SHA"
+          git -c core.fileMode=false merge --ff-only FETCH_HEAD
+          mkdir -p backups
+          chmod 700 backups
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          docker compose exec -T postgres sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > "backups/postgres-$stamp.dump"
+          test -s "backups/postgres-$stamp.dump"
+          if docker compose exec -T backend test -f /models/behavioral_models.joblib; then
+            docker compose cp backend:/models/behavioral_models.joblib "backups/model-$stamp.joblib"
+          fi
+          docker compose build backend celery_worker frontend
+          docker compose stop backend celery_worker celery_beat
+          docker compose run --rm --no-deps -e RUN_MIGRATIONS=0 backend alembic upgrade head
+          docker compose up -d backend celery_worker celery_beat frontend nginx
+          curl --fail --silent --show-error --max-time 15 https://vanguard.cuetinsights.dev/api/health
+          REMOTE

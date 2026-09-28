@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 from fastapi import WebSocket
@@ -10,6 +11,7 @@ from app.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 WEBSOCKET_EVENT_CHANNEL = "vanguard:websocket-events"
+WEBSOCKET_RELAY_HEARTBEAT = "system:websocket-relay:heartbeat"
 
 
 class ConnectionManager:
@@ -58,25 +60,37 @@ class ConnectionManager:
         )
 
     async def relay_published(self) -> None:
-        """Relay events from API and Celery processes to local sockets."""
-        pubsub = redis_client._require_client().pubsub()
-        await pubsub.subscribe(WEBSOCKET_EVENT_CHANNEL)
-        try:
-            async for message in pubsub.listen():
-                if message.get("type") != "message":
-                    continue
-                payload = message.get("data")
-                if isinstance(payload, bytes):
-                    payload = payload.decode("utf-8")
-                if isinstance(payload, str):
-                    await self.broadcast(payload)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("WebSocket Redis relay stopped unexpectedly")
-            raise
-        finally:
-            await pubsub.unsubscribe(WEBSOCKET_EVENT_CHANNEL)
-            await pubsub.aclose()
+        """Reconnect after Redis outages and report liveness even while idle."""
+        backoff = 1.0
+        while True:
+            pubsub = None
+            try:
+                client = redis_client._require_client()
+                pubsub = client.pubsub()
+                await pubsub.subscribe(WEBSOCKET_EVENT_CHANNEL)
+                logger.info("WebSocket Redis relay subscribed")
+                while True:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
+                    await client.set(WEBSOCKET_RELAY_HEARTBEAT, str(time.time()), ex=30)
+                    backoff = 1.0
+                    if not message or message.get("type") != "message":
+                        continue
+                    payload = message.get("data")
+                    if isinstance(payload, bytes):
+                        payload = payload.decode("utf-8")
+                    if isinstance(payload, str):
+                        await self.broadcast(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("WebSocket Redis relay disconnected; retrying in %.0fs", backoff)
+            finally:
+                if pubsub is not None:
+                    try:
+                        await pubsub.aclose()
+                    except Exception:
+                        logger.warning("Could not close WebSocket Redis subscription", exc_info=True)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
 
 manager = ConnectionManager()

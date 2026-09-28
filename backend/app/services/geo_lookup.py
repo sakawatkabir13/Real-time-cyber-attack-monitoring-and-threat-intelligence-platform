@@ -1,10 +1,13 @@
 import asyncio
 import ipaddress
+import logging
 import os
 from collections import OrderedDict
 
 import httpx
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 class GeoLookup:
     def __init__(self):
@@ -12,6 +15,38 @@ class GeoLookup:
         self.client: httpx.AsyncClient | None = None
         self._lock = asyncio.Lock()
         self.reader = None
+        self._reader_mtime_ns: int | None = None
+
+    def _refresh_reader(self) -> None:
+        path = settings.MAXMIND_DB_PATH
+        try:
+            mtime = os.stat(path).st_mtime_ns if path else None
+        except FileNotFoundError:
+            mtime = None
+        except OSError:
+            logger.warning("Could not inspect MaxMind database", exc_info=True)
+            return
+        if mtime == self._reader_mtime_ns and (mtime is None or self.reader is not None):
+            return
+        if mtime is None:
+            if self.reader is not None:
+                self.reader.close()
+            self.reader = None
+            self._reader_mtime_ns = None
+            self.cache.clear()
+            return
+        try:
+            import geoip2.database
+            replacement = geoip2.database.Reader(path)
+        except Exception:
+            logger.warning("Could not load MaxMind database", exc_info=True)
+            return
+        previous = self.reader
+        self.reader = replacement
+        self._reader_mtime_ns = mtime
+        self.cache.clear()
+        if previous is not None:
+            previous.close()
 
     async def _client(self) -> httpx.AsyncClient:
         async with self._lock:
@@ -20,6 +55,7 @@ class GeoLookup:
             return self.client
 
     async def lookup(self, ip: str) -> dict:
+        self._refresh_reader()
         if ip in self.cache:
             self.cache.move_to_end(ip)
             return self.cache[ip]
@@ -31,12 +67,8 @@ class GeoLookup:
         if not address.is_global:
             return {}
 
-        if settings.MAXMIND_DB_PATH and os.path.isfile(settings.MAXMIND_DB_PATH):
+        if self.reader is not None:
             try:
-                if self.reader is None:
-                    import geoip2.database
-
-                    self.reader = geoip2.database.Reader(settings.MAXMIND_DB_PATH)
                 response = self.reader.city(ip)
                 result = {
                     "country": response.country.iso_code or "XX",
@@ -44,9 +76,11 @@ class GeoLookup:
                     "lon": response.location.longitude,
                 }
                 self.cache[ip] = result
+                if len(self.cache) > 10_000:
+                    self.cache.popitem(last=False)
                 return result
-            except Exception as exc:
-                print(f"MaxMind lookup error for {ip}: {exc}")
+            except Exception:
+                logger.warning("MaxMind lookup failed for %s", ip, exc_info=True)
 
         try:
             client = await self._client()
@@ -76,5 +110,6 @@ class GeoLookup:
         if self.reader is not None:
             self.reader.close()
             self.reader = None
+        self._reader_mtime_ns = None
 
 geo_lookup = GeoLookup()

@@ -37,6 +37,7 @@ services:
     volumes:
       - model_data:/models
       - analysis_data:/var/lib/vanguard/uploads
+      - geoip_data:/geoip:ro
     env_file:
       - ${VANGUARD_ENV_FILE:-.env}
     environment:
@@ -58,6 +59,7 @@ services:
     volumes:
       - model_data:/models
       - analysis_data:/var/lib/vanguard/uploads
+      - geoip_data:/geoip:ro
     env_file:
       - ${VANGUARD_ENV_FILE:-.env}
     restart: unless-stopped
@@ -73,6 +75,21 @@ services:
     env_file:
       - ${VANGUARD_ENV_FILE:-.env}
     command: celery -A app.tasks.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler --schedule=/var/lib/celery/celerybeat-schedule
+    restart: unless-stopped
+
+  geoipupdate:
+    image: ghcr.io/maxmind/geoipupdate:latest
+    profiles: ["geoip"]
+    environment:
+      GEOIPUPDATE_ACCOUNT_ID_FILE: /run/secrets/maxmind_account_id
+      GEOIPUPDATE_LICENSE_KEY_FILE: /run/secrets/maxmind_license_key
+      GEOIPUPDATE_EDITION_IDS: GeoLite2-City
+      GEOIPUPDATE_FREQUENCY: "72"
+    secrets:
+      - maxmind_account_id
+      - maxmind_license_key
+    volumes:
+      - geoip_data:/usr/share/GeoIP
     restart: unless-stopped
 
   frontend:
@@ -100,3 +117,10 @@ volumes:
   model_data:
   celery_beat_data:
   analysis_data:
+  geoip_data:
+
+secrets:
+  maxmind_account_id:
+    file: ./secrets/maxmind_account_id.txt
+  maxmind_license_key:
+    file: ./secrets/maxmind_license_key.txt

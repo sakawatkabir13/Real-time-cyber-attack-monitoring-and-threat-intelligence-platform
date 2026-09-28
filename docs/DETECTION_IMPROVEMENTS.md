@@ -1,9 +1,9 @@
 # Detection improvements: measurements, completed windows, reviews, grouping
 
-Implements recommendations **1–5 and 7**. Recommendation **6 is excluded**:
-`backend/evaluate_model.py`, independent accuracy experiments, and the existing
-training/validation methodology have not been redesigned. Functional tests do
-not establish precision, recall, or a false-positive rate.
+Implements recommendations **1–5 and 7** for detection. Independent evaluation
+support was added later in `backend/evaluate_independent.py`; see
+[operations and evaluation](OPERATIONS_IMPROVEMENTS.md). A labeled holdout is still
+required before reporting measured precision, recall, or false-positive rate.
 
 ## What changed
 
@@ -198,4 +198,5 @@ npm run build
 
 The old classroom exercise of 110 lightweight HTTP 200 responses is now a useful
 negative control: **count alone should not trigger an HTTP-flood rule warning**.
-Do not claim this change improves measured model accuracy; point 6 remains future work.
+Do not claim measured model accuracy until an independently labeled holdout
+has been evaluated with the new workflow.
