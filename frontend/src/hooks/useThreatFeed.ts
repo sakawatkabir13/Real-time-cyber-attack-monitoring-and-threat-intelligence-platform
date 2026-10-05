@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '../store/appStore';
 
 export interface ThreatEvent {
@@ -22,6 +22,8 @@ export interface ThreatEvent {
   explanation?: string | null;
   anomaly_score?: number | null;
 }
+
+export type SubscribeToDetections = (listener: (event: ThreatEvent) => void) => () => void;
 
 export interface Stats {
   totalThreats: number;
@@ -63,6 +65,12 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   const [mlEvents, setMlEvents] = useState<ThreatEvent[]>([]);
   const [stats, setStats] = useState<Stats>(emptyStats);
   const [liveEvent, setLiveEvent] = useState<ThreatEvent | null>(null);
+  const detectionListeners = useRef(new Set<(event: ThreatEvent) => void>());
+  // Notify each arrival directly: React may batch multiple latest-event updates.
+  const subscribeToDetections: SubscribeToDetections = useCallback((listener) => {
+    detectionListeners.current.add(listener);
+    return () => { detectionListeners.current.delete(listener); };
+  }, []);
   const ws = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
   const autoRefresh = useAppStore((state) => state.settings.autoRefresh);
@@ -137,6 +145,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
               if (serverId && event.server_id !== serverId) return;
               if (hours && Date.parse(event.timestamp) < Date.now() - hours * 3600000) return;
               setLiveEvent(event);
+              for (const listener of detectionListeners.current) listener(event);
               setEvents((current) => mergeThreatEvents(current, [event]));
               if (isMlAnomaly(event)) {
                 setMlEvents((current) => mergeThreatEvents(current, [event], 20));
@@ -176,5 +185,5 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   }, [autoRefresh, hours, serverId, refreshVersion]);
 
   const cutoff = hours ? Date.now() - hours * 3600000 : 0;
-  return { events: events.filter((event) => Date.parse(event.timestamp) >= cutoff), mlEvents: mlEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), stats, liveEvent, connection, updatedAt, error: Object.values(errors).filter(Boolean).join(' · '), refresh: () => setRefreshVersion((value) => value + 1) };
+  return { events: events.filter((event) => Date.parse(event.timestamp) >= cutoff), mlEvents: mlEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), stats, liveEvent, subscribeToDetections, connection, updatedAt, error: Object.values(errors).filter(Boolean).join(' · '), refresh: () => setRefreshVersion((value) => value + 1) };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { geoInterpolate } from 'd3-geo';
 import { Info, MapPin, Pause, Play, Radio, X } from 'lucide-react';
@@ -7,30 +7,23 @@ import { useReducedMotion } from 'framer-motion';
 import { ComposableMap, Geographies, Geography, Line, Marker, ZoomableGroup } from 'react-simple-maps';
 import countries from 'world-atlas/countries-110m.json';
 
-import type { ThreatEvent } from '@/hooks/useThreatFeed';
+import type { SubscribeToDetections, ThreatEvent } from '@/hooks/useThreatFeed';
+import { advancePlayback, emptyPlayback } from './mapPlayback';
 import { useAppStore } from '@/store/appStore';
 import './ThreatMap.css';
 
 interface ThreatMapProps {
   events: ThreatEvent[];
   liveEvent: ThreatEvent | null;
+  subscribeToDetections?: SubscribeToDetections;
 }
 
 type GeoPoint = [number, number];
-
-interface ActiveRoute {
-  event: ThreatEvent;
-  startedAt: number;
-}
 
 interface SelectedEvent {
   event: ThreatEvent;
   pinned: boolean;
 }
-
-const MAX_ACTIVE_ROUTES = 5;
-const MAX_HISTORICAL_MARKERS = 90;
-const ROUTE_LIFETIME_MS = 4200;
 
 const severityColors: Record<string, string> = {
   low: '#67e8f9',
@@ -68,29 +61,27 @@ function eventTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
+export default function ThreatMap({ events, liveEvent, subscribeToDetections }: ThreatMapProps) {
   const { inspectEvent } = useInvestigation();
-  const [activeRoutes, setActiveRoutes] = useState<ActiveRoute[]>([]);
+  const [playback, setPlayback] = useState(emptyPlayback);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
   const [paused, setPaused] = useState(false);
-  const lastLiveEventId = useRef<string | null>(null);
+  const seenIds = useRef(new Set<string>());
   const reducedMotion = useReducedMotion();
   const autoRefresh = useAppStore((state) => state.settings.autoRefresh);
   const animationsEnabled = !paused && !reducedMotion;
 
   const historicalEvents = useMemo(() => {
-    const markers: ThreatEvent[] = [];
-    const seen = new Set<string>();
+    const markers = new Map<string, { event: ThreatEvent; count: number }>();
     for (const event of events) {
       const location = sourcePoint(event);
       if (!location) continue;
       const key = location[0].toFixed(1) + ':' + location[1].toFixed(1);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      markers.push(event);
-      if (markers.length >= MAX_HISTORICAL_MARKERS) break;
+      const existing = markers.get(key);
+      if (existing) existing.count += 1;
+      else markers.set(key, { event, count: 1 });
     }
-    return markers;
+    return [...markers.values()];
   }, [events]);
 
   const targets = useMemo(() => {
@@ -104,27 +95,44 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
     return [...byServer.values()];
   }, [events, liveEvent]);
 
-  useEffect(() => {
-    if (!liveEvent || liveEvent.id === lastLiveEventId.current) return;
-    lastLiveEventId.current = liveEvent.id;
-    if (!animationsEnabled || !sourcePoint(liveEvent) || !targetPoint(liveEvent)) return;
-    const startedAt = Date.now();
-    setActiveRoutes((current) => [
-      ...current.filter((route) => route.event.id !== liveEvent.id &&
-        startedAt - route.startedAt < ROUTE_LIFETIME_MS),
-      { event: liveEvent, startedAt },
-    ].slice(-MAX_ACTIVE_ROUTES));
-  }, [liveEvent, animationsEnabled]);
+  const enqueueDetection = useCallback((event: ThreatEvent) => {
+    if (seenIds.current.has(event.id)) return;
+    seenIds.current.add(event.id);
+    // Bound the replay guard, not the playback queue. Pending IDs are also checked below.
+    if (seenIds.current.size > 5000) seenIds.current.delete(seenIds.current.values().next().value!);
+    if (reducedMotion || !sourcePoint(event) || !targetPoint(event)) return;
+    setPlayback((current) => {
+      if (current.pending.some((item) => item.id === event.id) ||
+          current.active.some((route) => route.event.id === event.id)) return current;
+      return { ...current, pending: [...current.pending, event] };
+    });
+  }, [reducedMotion]);
+
+  useEffect(() => subscribeToDetections?.(enqueueDetection), [subscribeToDetections, enqueueDetection]);
 
   useEffect(() => {
-    if (activeRoutes.length === 0) return;
+    if (!subscribeToDetections && liveEvent) enqueueDetection(liveEvent);
+  }, [liveEvent, subscribeToDetections, enqueueDetection]);
+
+  useEffect(() => {
+    if (!animationsEnabled) return;
+    const startedAt = Date.now();
+    setPlayback((current) => advancePlayback(current, startedAt));
     const timer = window.setInterval(() => {
-      setActiveRoutes((current) => current.filter(
-        (route) => Date.now() - route.startedAt < ROUTE_LIFETIME_MS
-      ));
-    }, 250);
+      const now = Date.now();
+      setPlayback((current) => advancePlayback(current, now));
+    }, 100);
     return () => window.clearInterval(timer);
-  }, [activeRoutes.length]);
+  }, [animationsEnabled, playback.pending.length]);
+
+  const togglePaused = () => {
+    if (!paused) {
+      // Restart any interrupted route on resume, rather than losing it while hidden.
+      setPlayback((current) => ({ ...emptyPlayback,
+        pending: [...current.active.map((route) => route.event), ...current.pending] }));
+    }
+    setPaused((current) => !current);
+  };
 
   const showDetails = (event: ThreatEvent, pinned: boolean) => setSelected({ event, pinned });
   const hideUnpinned = () => setSelected((current) => current?.pinned ? current : null);
@@ -163,10 +171,7 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
             aria-pressed={paused}
             disabled={Boolean(reducedMotion)}
             title={reducedMotion ? 'Animations disabled by system reduced-motion preference' : undefined}
-            onClick={() => {
-              setPaused((current) => !current);
-              setActiveRoutes([]);
-            }}
+            onClick={togglePaused}
             className="inline-flex items-center gap-1 rounded border border-[#31505a] px-2 py-1 text-[10px] text-slate-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
@@ -176,6 +181,12 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
       </div>
 
       <div className="vanguard-map-surface relative min-h-[230px] flex-1">
+        <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-cyan-300/20 bg-[#071218]/90 px-2 py-1 text-[10px] text-cyan-100">
+          {playback.active.length} animating · {playback.pending.length} queued
+          {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — detections retained' : 'Queued playback — not real-time packet timing'}</span>}
+          {events.some((event) => !sourcePoint(event) || !targetPoint(event)) &&
+            <span className="block text-amber-200">Some detections lack location data; see cards below</span>}
+        </div>
         <ComposableMap width={1000} height={400} projection="geoMercator"
           projectionConfig={{ scale: 155 }} className="h-full w-full">
           <ZoomableGroup center={[0, 5]} zoom={1} minZoom={1} maxZoom={4}>
@@ -192,7 +203,7 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
               ))}
             </Geographies>
 
-            {historicalEvents.map((event) => {
+            {historicalEvents.map(({ event, count }) => {
               const location = sourcePoint(event);
               if (!location) return null;
               return (
@@ -210,18 +221,19 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
                   />
                   <circle r={1.8} fill={severityColors[event.severity] || severityColors.low}
                     opacity={0.65} pointerEvents="none" />
+                  {count > 1 && <text x={5} y={-5} fill="#d9fffd" fontSize={9} pointerEvents="none">×{count}</text>}
                 </Marker>
               );
             })}
 
-            {animationsEnabled && activeRoutes.map(({ event }) => {
+            {animationsEnabled && playback.active.map(({ event }, index) => {
               const from = sourcePoint(event);
               const to = targetPoint(event);
               if (!from || !to) return null;
               const coordinates = routeCoordinates(from, to);
               const color = severityColors[event.severity] || severityColors.low;
               return (
-                <g key={'route-' + event.id} pointerEvents="none">
+                <g key={'route-' + event.id} data-event-id={event.id} pointerEvents="none">
                   <Line data-testid="threat-arc" from={from} to={to} coordinates={coordinates}
                     pathLength={1} stroke={color} strokeWidth={1.4}
                     className="vanguard-route-path" />
@@ -231,6 +243,7 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
                   <Marker coordinates={from}>
                     <circle r={4} fill="none" stroke={color} strokeWidth={1}
                       className="vanguard-source-flash" />
+                    <text x={7} y={10 + (index % 4) * 10} fill={color} fontSize={8}>#{event.id}</text>
                   </Marker>
                   <Marker coordinates={to}>
                     <circle r={5} fill="none" stroke={color} strokeWidth={1.3}
@@ -308,12 +321,12 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
       <div className="relative z-10 flex min-h-[68px] items-center gap-3 border-t border-[#1a323a] bg-[#071218]/95 px-4 py-2">
         <div className="hidden shrink-0 items-center gap-1 text-[10px] font-semibold tracking-widest text-cyan-200 md:flex">
           <Info className="h-3 w-3" aria-hidden="true" />
-          RECENT DETECTIONS
+          RECENT {events.length} DETECTIONS
         </div>
         <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
           {events.length === 0 ? (
             <p className="py-2 text-xs text-slate-400">No detections recorded yet</p>
-          ) : events.slice(0, 3).map((event) => (
+          ) : events.map((event) => (
             <button key={event.id} type="button" onClick={() => showDetails(event, true)}
               className="min-w-[175px] flex-1 rounded border border-[#1c3840] bg-[#0b1b23] px-2 py-1.5 text-left text-[10px] text-slate-300 transition-colors hover:border-cyan-300/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
               <span className="flex items-center gap-1 font-semibold text-slate-100">
@@ -324,6 +337,7 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
               <span className="mt-1 block truncate text-slate-400">
                 {event.source_ip} → {event.server_id} · {eventTime(event.timestamp)}
               </span>
+              <span className="block truncate text-slate-400">#{event.id} · {event.path || 'Aggregated finding'}{!sourcePoint(event) || !targetPoint(event) ? ' · Location unavailable' : ''}</span>
             </button>
           ))}
         </div>

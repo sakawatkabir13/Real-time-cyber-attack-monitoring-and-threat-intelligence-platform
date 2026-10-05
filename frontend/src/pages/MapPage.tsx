@@ -4,7 +4,7 @@ import CollectorControl from '@/components/CollectorControl';
 import FeedStatus from '@/components/FeedStatus';
 
 export default function MapPage() {
-  const { events, liveEvent, connection, updatedAt, error, refresh } = useThreatFeed();
+  const { events, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useThreatFeed();
 
   return (
     <div className="p-6 space-y-4 h-full flex flex-col">
@@ -23,7 +23,7 @@ export default function MapPage() {
       </div>
       <FeedStatus connection={connection} updatedAt={updatedAt} error={error} onRefresh={refresh} />
       <div className="flex-1 min-h-[460px]">
-        <ThreatMap events={events} liveEvent={liveEvent} />
+        <ThreatMap events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} />
       </div>
     </div>
   );

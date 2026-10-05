@@ -15,7 +15,7 @@ export default function Dashboard() {
   const [hours, setHours] = useState(24);
   const [serverId, setServerId] = useState('');
   const [servers, setServers] = useState<string[]>([]);
-  const { events, mlEvents, stats, liveEvent, connection, updatedAt, error, refresh } = useThreatFeed({ hours, serverId });
+  const { events, mlEvents, stats, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useThreatFeed({ hours, serverId });
   useEffect(() => { let cancelled = false; fetch('/api/collectors').then((response) => response.ok ? response.json() : []).then((rows: Array<{ serverId: string }>) => { if (!cancelled) setServers(rows.map((row) => row.serverId)); }).catch(() => {}); return () => { cancelled = true; }; }, []);
 
   const anomalyData = useMemo(() => {
@@ -78,7 +78,7 @@ export default function Dashboard() {
 
       {/* Map */}
       <div className="h-[500px]">
-        <ThreatMap events={events} liveEvent={liveEvent} />
+        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} />
       </div>
 
       {/* Grid for Anomaly, Feed, Queue */}

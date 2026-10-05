@@ -25,6 +25,27 @@ afterEach(() => {
 });
 
 describe('live event recovery', () => {
+  it('delivers every WebSocket detection even when React batches the latest-event state', async () => {
+    useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
+    vi.stubGlobal('WebSocket', TestSocket);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([]))));
+    const { result } = renderHook(() => useThreatFeed());
+    await act(async () => {});
+    const received: string[] = [];
+    const unsubscribe = result.current.subscribeToDetections((item) => received.push(item.id));
+    act(() => {
+      for (let index = 0; index < 200; index += 1) {
+        TestSocket.instances[0].onmessage?.({
+          data: JSON.stringify({ type: 'NEW_THREAT', data: { ...event, id: String(index) } }),
+        });
+      }
+    });
+    expect(received).toEqual(Array.from({ length: 200 }, (_, index) => String(index)));
+    expect(result.current.liveEvent?.id).toBe('199');
+    unsubscribe();
+    act(() => TestSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'NEW_THREAT', data: event }) }));
+    expect(received).toHaveLength(200);
+  });
   it('backfills missed events on WebSocket open without dropping newer live events', async () => {
     useAppStore.setState((state) => ({
       settings: { ...state.settings, autoRefresh: true },

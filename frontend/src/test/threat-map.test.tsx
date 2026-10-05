@@ -43,8 +43,8 @@ function event(id: string, lat: number, lng: number): ThreatEvent {
   };
 }
 
-beforeEach(() => reducedMotion.mockReturnValue(false));
-afterEach(cleanup);
+beforeEach(() => { reducedMotion.mockReturnValue(false); vi.useFakeTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('ThreatMap precision routes', () => {
   it('routes independent live sources to their monitored server, never to each other', () => {
@@ -52,6 +52,7 @@ describe('ThreatMap precision routes', () => {
     const germany = event('de', 52.52, 13.405);
     const view = render(<ThreatMap events={[bangladesh, germany]} liveEvent={bangladesh} />);
     view.rerender(<ThreatMap events={[germany, bangladesh]} liveEvent={germany} />);
+    act(() => vi.advanceTimersByTime(300));
 
     expect(screen.getByText('MONITORED SERVER').parentElement)
       .toHaveAttribute('data-coordinates', '-77.4903,39.0469');
@@ -73,22 +74,27 @@ describe('ThreatMap precision routes', () => {
     expect(points[24][1]).toBeGreaterThan((52.52 + 39.0469) / 2);
   });
 
-  it('caps simultaneous routes and stops new animations when paused', () => {
+  it('queues overflow and retains interrupted and newly arriving detections while paused', () => {
     const first = event('one', 23.81, 90.41);
     const view = render(<ThreatMap events={[first]} liveEvent={first} />);
-    for (let index = 2; index <= 7; index += 1) {
+    for (let index = 2; index <= 13; index += 1) {
       const next = event(String(index), 23.81 + index, 90.41);
       view.rerender(<ThreatMap events={[next, first]} liveEvent={next} />);
     }
-    expect(screen.getAllByTestId('threat-arc')).toHaveLength(5);
+    act(() => vi.advanceTimersByTime(3300));
+    expect(screen.getAllByTestId('threat-arc')).toHaveLength(12);
+    expect(screen.getByText('12 animating · 1 queued')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Pause map animations' }));
     expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
+    expect(screen.getByText('0 animating · 13 queued')).toBeInTheDocument();
     view.rerender(<ThreatMap events={[first]} liveEvent={event('eight', 40, 20)} />);
     expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
+    expect(screen.getByText('0 animating · 14 queued')).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(10000));
+    expect(screen.getByText('0 animating · 14 queued')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Resume map animations' }));
-    expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
-    view.rerender(<ThreatMap events={[first]} liveEvent={event('nine', 45, 25)} />);
     expect(screen.getByTestId('threat-arc')).toBeInTheDocument();
+    expect(screen.getByText('1 animating · 13 queued')).toBeInTheDocument();
   });
 
   it('honors reduced motion and still allows inspecting historical detections', () => {
@@ -125,6 +131,7 @@ describe('ThreatMap precision routes', () => {
     expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
     view.rerender(<ThreatMap events={[first, second]} liveEvent={first} />);
     view.rerender(<ThreatMap events={[second, first]} liveEvent={second} />);
+    act(() => vi.advanceTimersByTime(300));
     expect(screen.getAllByTestId('threat-arc').map((arc) => arc.getAttribute('data-to')))
       .toEqual(['-77.4903,39.0469', '2.35,48.86']);
     expect(screen.getAllByText('MONITORED SERVER')).toHaveLength(2);
@@ -135,6 +142,7 @@ describe('ThreatMap precision routes', () => {
     const second = event('two', 23.82, 90.42);
     render(<ThreatMap events={[second, first]} liveEvent={null} />);
     expect(screen.getAllByRole('button', { name: /Inspect scanner from/ })).toHaveLength(1);
+    expect(screen.getByText('×2')).toBeInTheDocument();
     expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
   });
 
@@ -162,6 +170,30 @@ describe('ThreatMap precision routes', () => {
     expect(screen.getByRole('region', { name: 'Detection details' })).toHaveTextContent('GET /admin');
     fireEvent.click(screen.getByRole('button', { name: 'Close detection details' }));
     expect(screen.queryByRole('region', { name: 'Detection details' })).not.toBeInTheDocument();
+  });
+
+  it('animates every event in a batched repeated-IP burst, without replaying duplicate IDs', () => {
+    let deliver: ((event: ThreatEvent) => void) | undefined;
+    const subscribe = (listener: (event: ThreatEvent) => void) => {
+      deliver = listener;
+      return () => { deliver = undefined; };
+    };
+    const burst = Array.from({ length: 25 }, (_, index) => ({
+      ...event(String(index), 23.81, 90.41), source_ip: '103.1.2.3',
+    }));
+    render(<ThreatMap events={burst} liveEvent={null} subscribeToDetections={subscribe} />);
+    act(() => { for (const detection of burst) deliver?.(detection); deliver?.(burst[0]); });
+    const animated = new Set<string>();
+    for (let step = 0; step < 100; step += 1) {
+      for (const arc of screen.queryAllByTestId('threat-arc')) {
+        animated.add(arc.parentElement!.getAttribute('data-event-id')!);
+      }
+      act(() => vi.advanceTimersByTime(300));
+    }
+    expect([...animated].sort()).toEqual(burst.map((item) => item.id).sort());
+    expect(screen.getByText('0 animating · 0 queued')).toBeInTheDocument();
+    expect(screen.getByText('×25')).toBeInTheDocument();
+    expect(screen.getAllByText(/103\.1\.2\.3 →/)).toHaveLength(25);
   });
 
 });
