@@ -1,188 +1,494 @@
-# Vanguard-360
+<div align="center">
 
-Self-hosted HTTP security monitoring with access-log collection, rule-based detection, behavioral machine learning, and a live investigation dashboard.
+# 🛡️ Vanguard-360
 
-[Live dashboard](https://vanguard.cuetinsights.dev) · [Report an issue](https://github.com/sakawatkabir13/Real-time-cyber-attack-monitoring-and-threat-intelligence-platform/issues) · [MIT license](LICENSE)
+### Real-time cyber attack monitoring and threat intelligence platform — hybrid rule + ML detection, live world map, and remote collector fleet management for self-hosted infrastructure.
 
-Vanguard collects web-server access logs and looks for suspicious requests and traffic patterns. Operators can inspect the evidence, review alerts, and track the monitored servers from one dashboard. The current deployment runs on AWS EC2 and monitors `spandan.cuetinsights.dev`.
+[![Live](https://img.shields.io/badge/Live-vanguard.cuetinsights.dev-46E3B7?style=for-the-badge&logo=cloudflare&logoColor=white)](https://vanguard.cuetinsights.dev)
+[![Hosted on AWS](https://img.shields.io/badge/Hosted%20on-AWS%20EC2-FF9900?style=for-the-badge&logo=amazonec2&logoColor=white)](https://aws.amazon.com/ec2/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](./LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](backend/requirements.txt)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=white)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](./docker-compose.yml)
 
-## What it does
+<br />
 
-- Detects SQL-injection, XSS, and path-traversal signatures, authentication-failure patterns, HTTP-flood indicators, and scanner activity visible in access logs.
-- Aggregates traffic by server and source IP for Isolation Forest anomaly detection.
-- Shows detections on a world map with bounded source-to-server animations, request details, and reduced-motion support. Map coordinates are approximate; arcs do not represent measured packet routes.
-- Provides time-range and server filters, detection statistics, event feeds, anomaly scores, and connection/pipeline status.
-- Stores deduplicated alerts with acknowledgment, resolution, investigation verdicts, and review history. Related-incident groups suggest connections between alerts.
-- Manages collector forwarding with remote pause/resume controls and heartbeat-based status.
-- Processes manual log uploads through durable Celery jobs with progress and rejected-line counts.
-- Supports optional AbuseIPDB reputation lookup, Groq-generated summaries, and local MaxMind geolocation.
+Vanguard-360 is a production-style security operations dashboard that brings **servers, agents, and operators** into one self-hosted system — with a hybrid rule + behavioural-ML detection engine, deduplicated alerting, and an end-to-end ingestion pipeline that survives retries and out-of-order delivery.
 
-Vanguard is a detection and investigation tool. It does not block requests or provide network-level intrusion detection. A TCP SYN scan such as `nmap -sS` does not normally produce an HTTP access-log entry and is outside its detection scope. A detection or anomaly is evidence to investigate, not confirmation of an attack.
+Live now at **[vanguard.cuetinsights.dev](https://vanguard.cuetinsights.dev)** — running on an **AWS EC2** instance.
 
-## How the pipeline works
+[🐛 Report Bug](https://github.com/sakawatkabir13/real-time-cyber-attack-and-monitoring-map/issues) · [✨ Request Feature](https://github.com/sakawatkabir13/real-time-cyber-attack-and-monitoring-map/issues)
+
+</div>
+
+---
+
+## ✨ Why Vanguard-360?
+
+Most teams running their own infrastructure have **no real-time visibility** into who's hitting their services, what payloads they're sending, or whether an attack is building. **Vanguard-360** plugs that gap — a lightweight agent tails your access logs, the backend classifies every event through deterministic signatures plus per-source behavioural models, and the dashboard streams detections onto a live world map in real time.
+
+> ⚠️ **Defensive use only.** Vanguard-360 is built to monitor systems **you own or have explicit permission to monitor**. Do not point it at third-party infrastructure — the bundled agent is shipped as a detection tool, not an offensive one.
+
+---
+
+## 📑 Table of Contents
+
+1. [✨ Features](#-features)
+2. [🧱 Tech Stack](#-tech-stack)
+3. [🏗️ Architecture](#-architecture)
+4. [🚀 Quick Start](#-quick-start)
+5. [🧪 Available Scripts](#-available-scripts)
+6. [📁 Project Structure](#-project-structure)
+7. [🔐 Environment Variables](#-environment-variables)
+8. [🐳 Docker Deployment](#-docker-deployment)
+9. [🛰️ Remote Agent](#-remote-agent)
+10. [🛡️ Defensive-Use Disclaimer](#-defensive-use-disclaimer)
+11. [🤝 Contributing](#-contributing)
+12. [🛡️ Security](#-security)
+13. [📄 License](#-license)
+14. [🙏 Acknowledgements](#-acknowledgements)
+
+---
+
+## ✨ Features
+
+### 🧠 For Detection Engineers
+- 🩺 **Hybrid detection pipeline** — SQLi/XSS/traversal signatures, authentication-failure and contextual HTTP-flood warnings, scanner indicators, and per-source/per-server IsolationForest behavioural models
+- 🧪 **Trained on real traffic**, not synthetic data — models only engage once enough clean windows have accumulated
+- 🔁 **Zero-downtime hot-reload** the moment a newly trained model passes validation
+- 📈 **Event-time rate tracking** in Redis, measured response-time coverage, burst and change features, and scheduled completed-window scoring
+
+### 🛰️ For Operators
+- 🧾 **Idempotent ingestion** — safe against agent retries and duplicate delivery
+- 🌍 **Live world map** of attack origins with geo-located source IPs
+- 🧯 **Persistent alerts** with acknowledgment, investigation verdicts/history, occurrence counters, and suggested related-incident groups
+- ⏸️ **Remote collector fleet management** — pause or resume log shipping per server from the dashboard, with heartbeat-based online / offline tracking
+- 🧹 **Scheduled retention cleanup** so the database doesn't grow unbounded
+
+### 🔐 For Platform Owners
+- 🔑 Session-based dashboard auth with **HMAC-signed, constant-time-compared tokens**
+- ⚡ Rate limiting on login, IP-lookup, and AI analysis endpoints
+- 🚨 **Refuses to boot in production** with default or placeholder secrets
+- 🧱 API docs disabled outside development
+- 🔒 Single Nginx ingress — frontend and backend are strictly same-origin, no CORS configuration required in production
+
+### 🧰 For Everyone
+- 🤖 Optional **Groq-powered LLM** for plain-language threat summaries
+- 🌐 Optional **AbuseIPDB** IP-reputation enrichment, cached and rate-limited
+- 📜 Optional **historical log upload** with streaming analysis and progress polling
+- 🎨 Theming and design tokens with **Tailwind CSS**
+- 🧪 Backend tests with **Pytest** + frontend tests with **Vitest** + **Testing Library**
+
+---
+
+## 🏗️ Architecture
 
 ```mermaid
 flowchart TD
-    Logs[Web-server access logs] --> Agent[Python collector with SQLite spool]
-    Agent -->|Authenticated HTTPS batches| API[FastAPI]
-    Upload[Manual log upload] --> Jobs[Celery analysis job]
-    Jobs --> Detection[Rules and traffic aggregation]
-    API --> Detection
-    Detection --> Redis[(Redis counters and traffic windows)]
-    Detection --> DB[(PostgreSQL detections and alerts)]
-    Redis --> Scorer[Completed-window scorer]
-    Scorer --> DB
-    Redis --> Persist[Celery window persistence]
-    Persist --> DB
-    DB --> Training[Scheduled training and validation]
-    Training --> Models[Shared model artifact]
-    Models --> Scorer
-    DB --> Updates[REST queries and Redis-backed WebSocket updates]
-    Updates --> UI[React dashboard]
+    subgraph Monitored["Monitored Server"]
+        LOG[Nginx access.log] --> AGENT[Python Agent<br/>SQLite spool + retry]
+    end
+
+    AGENT -->|HTTPS batch POST| NGINX
+
+    subgraph Vanguard["Vanguard-360 Stack (Docker)"]
+        NGINX2[Nginx<br/>single ingress · rate limiting · TLS termination]
+        NGINX2 --> FE[React Frontend]
+        NGINX2 --> API[FastAPI Backend]
+        API --> PG[(PostgreSQL 15<br/>Alembic migrations)]
+        API --> RD[(Redis 7<br/>sliding windows + queues)]
+        API -.WebSocket.-> FE
+        WORKER[Celery Worker<br/>enrich · train · cleanup] --> RD
+        WORKER --> PG
+        BEAT[Celery Beat<br/>scheduler] --> WORKER
+    end
+
+    WORKER -->|enrichment| ABUSE[AbuseIPDB]
+    API -->|analysis| GROQ[Groq LLM]
 ```
 
-The collector reads new log entries, queues them locally, and sends batches with stable event IDs. Retries can deliver the same batch again without creating duplicate events. Request timestamps drive traffic measurements so a delayed batch is not treated as a sudden burst.
+**Key flows**
+- **Single ingress** — the bundled Nginx container is the **only** externally exposed service. The frontend and backend never accept direct traffic, so the whole stack is one port to reverse-proxy behind your own domain.
+- **Idempotent ingestion** — every event carries a stable `event_id`; the backend enforces uniqueness so retries and out-of-order delivery never produce duplicates.
+- **Detection pipeline** — for every ingested event: **volumetric check** → **signature rules** → **behavioural scoring** (only once enough clean data exists).
+- **Alert deduplication** — high and critical severity events are coalesced into a single alert record with an occurrence counter rather than spamming duplicates.
+- **Collector fleet** — each agent heartbeats in, reports its desired-state, and can be paused or resumed remotely. Offline state is derived from a stale-heartbeat threshold.
 
-PostgreSQL stores detected events, alerts, reviews, collector state, traffic summaries, and training-run records. Ordinary requests contribute to traffic summaries rather than becoming individual threat records. Redis holds short-lived counters, pending windows, job progress, and the Celery broker/result backend; its pub/sub channel relays live updates between workers and the API.
+Detailed architecture and deployment guides are maintained privately and are not included in this repository.
 
-Celery Beat schedules window persistence, model training, retention cleanup, and pipeline heartbeats. The API runs completed-window scoring and incident grouping, and serves the authenticated dashboard.
+---
 
-## The ML layer
+## 📡 API Reference
 
-Vanguard trains separate server-level and source-level Isolation Forest models for each monitored server. Features summarize request rates, bursts, path repetition, failures, and measured response behavior. Missing response-duration measurements reduce the information available to the model.
+All endpoints are served under `/api`, behind the bundled Nginx.
 
-Default training settings are:
+| Method | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/login` | — | Authenticate and receive a session cookie |
+| `POST` | `/api/auth/logout` | Session | End the current session |
+| `GET` | `/api/auth/status` | Session | Check current auth state |
+| `GET` | `/api/health` | — | Liveness + Redis/PostgreSQL connectivity check |
+| `WS` | `/ws` | Session | Real-time threat and alert event stream |
+| `POST` | `/api/ingest/batch` | Collector token | Agent log ingestion endpoint |
+| `POST` | `/api/collector/heartbeat` | Collector token | Agent heartbeat + desired-state check-in |
+| `GET` | `/api/collectors` | Session | List all known collector agents and their status |
+| `POST` | `/api/collectors/{server_id}/command` | Session | Pause or resume a collector remotely |
+| `GET` | `/api/events` | Session | Recent threat events |
+| `GET` | `/api/stats` | Session | Aggregate dashboard statistics (cached) |
+| `GET` | `/api/alerts` | Session | List deduplicated alerts, filterable by status |
+| `PATCH` | `/api/alerts/{alert_id}/acknowledge` | Session | Acknowledge an alert |
+| `PATCH` | `/api/alerts/{alert_id}/review` | Session | Save an investigation verdict and evidence with revision checking |
+| `GET` | `/api/alerts/{alert_id}/reviews` | Session | Read investigation history |
+| `GET` | `/api/incidents` | Session | Read suggested related-incident groups |
+| `GET` | `/api/ip-lookup/{ip}` | Session | Reputation and history for an IP |
+| `POST` | `/api/analyze-threat` | Session | LLM-generated plain-language threat summary |
+| `POST` | `/api/analyze-log-file` | Session | Upload and analyze a historical log file |
+| `GET` | `/api/analysis-status` | Session | Progress of an in-flight log file analysis |
+| `GET` | `/api/ml/status` | Session | Current model training/validation status |
 
-| Setting | Default |
+---
+
+## 🧱 Tech Stack
+
+### Backend
+| Layer | Technology |
 | --- | --- |
-| Server traffic window | 60 seconds, at least 20 requests |
-| Source traffic window | 300 seconds, at least 5 requests |
-| Minimum eligible samples | 200 windows for each server/scope model |
-| Training history | Most recent 30 days |
-| Scheduled training | Daily at 03:30 UTC |
+| Runtime | **Python 3.11** |
+| Framework | **FastAPI** (async) |
+| ORM | **SQLAlchemy** (async) with `asyncpg` |
+| Validation | **Pydantic v2** |
+| Migrations | **Alembic** |
+| Auth | Session cookies, **HMAC-signed**, constant-time compared |
+| Machine Learning | **scikit-learn** (`IsolationForest`), `joblib` |
+| Background tasks | **Celery** worker + beat |
+| Tests | **Pytest** + `pytest-asyncio` |
 
-Training excludes rule-flagged and scanner-like windows and applies additional outlier checks. A later portion of the selected history is used to check candidate models before promotion. Compatible model artifacts reload without an API restart.
-
-Until enough eligible traffic exists, the model reports `warming_up`; rules remain active. Low-traffic sites can take time to build a baseline because sparse windows do not qualify. Settings shows candidate counts, exclusion reasons, training runs, model status, and pipeline heartbeats.
-
-The repository includes an independent-label evaluation tool, but detection accuracy and any advantage over rules alone must be measured on a labeled holdout. Training eligibility and internal validation do not establish that traffic is benign or that an alert is correct.
-
-## Components
-
-| Component | Technology and purpose |
+### Frontend
+| Layer | Technology |
 | --- | --- |
-| Dashboard | React 18, TypeScript, Vite 7, Tailwind CSS, TanStack Query, Zustand, Recharts |
-| API | Python 3.11, FastAPI, Pydantic, async SQLAlchemy |
-| Persistent storage | PostgreSQL 15 with Alembic migrations |
-| Counters, jobs, live relay | Redis 7 |
-| Background jobs | Celery worker and Celery Beat |
-| Behavioral models | scikit-learn Isolation Forest and joblib |
-| Collector | Python agent, SQLite spool, systemd service |
-| Deployment | Docker Compose and bundled Nginx ingress; host reverse proxy terminates production TLS |
+| Framework | **React 18** |
+| Language | **TypeScript 5** |
+| Build tool | **Vite 5** |
+| Styling | **Tailwind CSS** |
+| Routing | **React Router** |
+| Data fetching | **TanStack Query** |
+| Real-time | **WebSocket** threat and alert stream |
+| Tests | **Vitest** + **Testing Library** + **jsdom** |
 
-## Run the application
+### Database, Infrastructure & Tooling
+| Layer | Technology |
+| --- | --- |
+| Database | **PostgreSQL 15** |
+| Cache / Queue | **Redis 7** |
+| Reverse proxy | **Nginx** (bundled) |
+| Orchestration | **Docker Compose** |
+| Lint | **Ruff** (backend), **ESLint** (frontend) |
 
-Install Docker and Docker Compose, then clone the repository:
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Docker** & Docker Compose **v2.x+**
+- `make` *(optional, for convenience targets)*
+
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/sakawatkabir13/Real-time-cyber-attack-monitoring-and-threat-intelligence-platform.git vanguard-360
-cd vanguard-360
+git clone https://github.com/sakawatkabir13/real-time-cyber-attack-and-monitoring-map.git
+cd real-time-cyber-attack-and-monitoring-map
+```
+
+### 2. Configure environment
+
+```bash
 cp .env.example .env
 ```
 
-Edit `.env` before starting. Replace `POSTGRES_PASSWORD`, `COLLECTOR_TOKEN`, `SECRET_KEY`, and `DASHBOARD_PASSWORD`. Set the same PostgreSQL password in `DATABASE_URL`; URL-encode it if it contains reserved characters. Generate separate random secrets with `openssl rand -hex 32`.
+> 🔑 Generate strong secrets for every required field before bringing the stack up:
+>
+> ```bash
+> openssl rand -hex 32
+> ```
 
-For a local HTTP session, use:
-
-```dotenv
-ENVIRONMENT=development
-COOKIE_SECURE=false
-BIND_ADDRESS=127.0.0.1
-HTTP_PORT=8080
-```
-
-For production, keep `ENVIRONMENT=production` and `COOKIE_SECURE=true`, and put an HTTPS reverse proxy in front of the loopback-bound Compose listener. The example defaults to port 80; set `HTTP_PORT` to the port used by your host proxy. Production startup rejects placeholder credentials and insecure cookie settings.
+### 3. Launch the stack
 
 ```bash
 docker compose up --build -d
-docker compose ps
 ```
 
-The backend applies Alembic migrations before starting. Other services start according to their Compose dependencies. With the local settings above, open `http://localhost:8080` and sign in using `DASHBOARD_PASSWORD`.
+On first boot the backend will:
 
-Full configuration defaults are in [`.env.example`](.env.example). Leave `CORS_ORIGINS=[]` for a same-origin frontend/API deployment. Optional API keys can remain empty. Set `TARGET_LATITUDE` and `TARGET_LONGITUDE` to the monitored server's approximate location for map destinations. MaxMind support requires a separately configured account/license; otherwise geolocation can use the external fallback.
+1. Wait for PostgreSQL to be healthy.
+2. Run `alembic upgrade head` (idempotent migrations).
+3. Start the FastAPI API, the Celery worker, and the Celery beat scheduler.
+4. Serve the React frontend through the bundled Nginx ingress.
 
-## Connect a monitored server
+### 4. Open the apps
 
-The collector must run on the machine that can read the website's access log. Configure its environment before installation:
+| App | URL |
+| --- | --- |
+| 🖥️ Dashboard (local) | http://localhost:8080 |
+| 🩺 Health check (local) | http://localhost:8080/api/health |
+| 📘 API docs (local, development only) | http://localhost:8080/api/docs |
+| 🌍 **Live (AWS EC2)** | **https://vanguard.cuetinsights.dev** |
+
+To start monitoring a server, install the agent found in [`agent/`](agent/) on the machine you want to watch and point it at your Vanguard instance (e.g. `https://vanguard.cuetinsights.dev`).
+
+---
+
+## 🧪 Available Scripts
+
+### Root (Docker Compose shortcuts)
+
+| Command | Description |
+| --- | --- |
+| `docker compose up --build -d` | Build and start the entire stack in the background |
+| `docker compose down` | Stop and remove containers |
+| `docker compose restart` | Restart all services |
+| `docker compose logs -f` | Follow logs from all services |
+| `docker compose exec backend alembic upgrade head` | Apply migrations manually |
+| `docker compose exec backend pytest -v` | Run the backend test suite inside the container |
+
+### Backend (inside `backend/`)
 
 ```bash
-cd agent
-cp .env.example .env
+ruff check .              # lint
+pytest -v                 # run tests
+alembic upgrade head      # apply migrations
+uvicorn app.main:app --reload
 ```
 
-Edit `agent/.env` with the HTTPS `BACKEND_URL`, matching `COLLECTOR_TOKEN`, a stable `SERVER_ID`, and the correct `LOG_PATH`. Use a dedicated site log when monitoring one site on a shared VPS. JSON logs with original client IP, timezone-aware timestamp, method, path, status, bytes, duration, and user agent provide the most useful measurements.
+### Frontend (inside `frontend/`)
 
-```bash
-sudo ./install.sh
-sudo systemctl status vanguard-agent
-sudo journalctl -u vanguard-agent -f
+| Script | Description |
+| --- | --- |
+| `npm run dev` | Start the Vite dev server with HMR |
+| `npm run build` | Production build to `dist/` |
+| `npm run preview` | Preview the production build locally |
+| `npm run lint` | Run ESLint over the project |
+| `npm run test` | Run the Vitest suite once |
+| `npm run test:watch` | Run Vitest in watch mode |
+
+### Agent (inside `agent/`)
+
+| Script | Description |
+| --- | --- |
+| `python agent.py` | Start the agent with values from `agent.conf` |
+| `python test_agent.py` | Self-test: spool rotation, retry, dry-run ingest |
+
+---
+
+## 📁 Project Structure
+
+```
+vanguard-360/
+├── backend/                 # FastAPI service
+│   ├── app/
+│   │   ├── routers/         # ingest, alerts, collectors, auth
+│   │   ├── services/        # detection engine, ML, alerting, geo lookup
+│   │   ├── tasks/           # Celery: enrichment, training, cleanup
+│   │   └── models/          # SQLAlchemy models
+│   ├── alembic/             # migrations
+│   ├── tests/               # Pytest suite
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/                # Vite + React + TS dashboard
+│   ├── src/
+│   │   ├── components/      # dashboard widgets, charts, layouts
+│   │   ├── hooks/           # data hooks (live feed, etc.)
+│   │   ├── pages/           # dashboard, alerts, ip-lookup, settings
+│   │   └── store/           # global client state
+│   ├── tests/               # Vitest setup
+│   ├── Dockerfile
+│   └── package.json
+├── agent/                   # remote log-shipping agent
+│   ├── agent.py
+│   ├── install.sh
+│   ├── vanguard-agent.service
+│   ├── test_agent.py
+│   └── requirements.txt
+├── nginx/                   # bundled ingress configuration
+├── .github/
+│   ├── ISSUE_TEMPLATE/      # bug_report.yml, feature_request.yml
+│   ├── workflows/ci.yml     # GitHub Actions CI
+│   └── PULL_REQUEST_TEMPLATE.md
+├── docker-compose.yml
+├── .env.example
+├── LICENSE
+└── README.md
 ```
 
-The installer copies the agent and its private `.env` into `/opt/vanguard-agent` and registers the systemd service. Its SQLite spool lives under `/var/lib/vanguard-agent`. By default, it starts at the end of an existing log and forwards new entries.
+---
 
-Collector pause stops forwarding; it does not stop the website. The map's pause control only pauses visualization animations.
+## 🔐 Environment Variables
 
-## Operations and testing
+All variables are loaded from `.env` via `pydantic-settings`. Server-side secrets **must never** be committed.
+
+| Variable | Required | Description |
+| --- | :---: | --- |
+| `ENVIRONMENT` | ✅ | `development` \| `production` — production refuses placeholder secrets |
+| `POSTGRES_PASSWORD` | ✅ | PostgreSQL password; must match the password encoded in `DATABASE_URL` |
+| `DATABASE_URL` | ✅ | Async PostgreSQL connection string |
+| `DATABASE_SSL` | ⚙️ | `true` when connecting through TLS |
+| `REDIS_URL` | ✅ | Redis connection string |
+| `COLLECTOR_TOKEN` | ✅ | Shared secret agents use to authenticate ingestion |
+| `SECRET_KEY` | ✅ | HMAC key for dashboard session tokens |
+| `DASHBOARD_PASSWORD` | ✅ | Dashboard login credential |
+| `SESSION_TTL_SECONDS` | ⚙️ | Default `43200` (12h) |
+| `CORS_ORIGINS` | ⚙️ | Leave empty — same-origin behind bundled Nginx |
+| `COOKIE_SECURE` | ⚙️ | Must be `true` in production |
+| `ABUSEIPDB_API_KEY` | ⚙️ | Enables IP reputation enrichment |
+| `GROQ_API_KEY` | ⚙️ | Enables LLM-powered threat summaries |
+| `GROQ_MODEL` | ⚙️ | Groq model ID; default `openai/gpt-oss-120b` |
+| `ANALYSIS_UPLOAD_DIR` | ⚙️ | Shared durable storage for queued manual log jobs |
+| `MAXMIND_DB_PATH` | ⚙️ | Optional MaxMind GeoLite2-City.mmdb path |
+| `EVENT_RETENTION_DAYS` | ⚙️ | Default `30` |
+| `ALERT_DEDUPE_SECONDS` | ⚙️ | Default `900` |
+| `COLLECTOR_OFFLINE_SECONDS` | ⚙️ | Default `45` |
+| `ML_MIN_TRAINING_WINDOWS` | ⚙️ | Minimum behavioural windows before training runs |
+| `ML_CONTAMINATION` | ⚙️ | Default `0.02` |
+| `ML_ALERT_SCORE` | ⚙️ | Score threshold for ML alerts (default `90.0`) |
+| `TARGET_LATITUDE` / `TARGET_LONGITUDE` | ⚙️ | Your server coordinates, used for map arc destinations |
+
+Full reference with defaults lives in [`.env.example`](./.env.example).
+
+### ⚙️ Configuration highlights
+
+A few variables deserve more explanation than a table row can give:
+
+- **`CORS_ORIGINS`** — leave this empty. Frontend and API are strictly same-origin behind the bundled Nginx, so no cross-origin configuration is needed in production. Setting values here will silently widen your attack surface.
+- **`COOKIE_SECURE`** — must be `true` in production. The backend will refuse to boot otherwise (see `validate_production_secrets` in `backend/app/config.py`).
+- **`ML_MIN_TRAINING_WINDOWS`** — controls when the behavioural IsolationForest models engage. Set this too low and you train on noise; too high and you have no ML coverage during early deployment.
+- **`ML_ALERT_SCORE`** — the anomaly-score threshold (0–100) above which a flagged event becomes a persisted ML alert. Tune this in tandem with `ML_CONTAMINATION`.
+- **`TARGET_LATITUDE` / `TARGET_LONGITUDE`** — the destination coordinate for the live world map's attack arcs. Set these to the monitored server's approximate hosting location; arcs show geographic endpoints, not the packets' actual network route.
+- **`ABUSEIPDB_API_KEY`** — without this, IP reputation enrichment silently falls back to "no data". The dashboard still works; the IP-lookup panel just shows blanks.
+- **`GROQ_API_KEY`** — without this, the AI-powered threat summary endpoint returns a graceful "AI disabled" message instead of a plain-language analysis.
+- **`GROQ_MODEL`** — selects the Groq-hosted model used for summaries. The deployment currently defaults to `openai/gpt-oss-120b`.
+
+Manual log uploads are copied to a private shared Docker volume and processed by
+Celery with late acknowledgement. Progress lives in Redis, so restarting the API
+does not discard an in-flight job. Stable per-line event IDs make a worker
+redelivery safe.
+
+### 🔍 Detection Pipeline
+
+Every ingested event is evaluated in order:
+
+1. **Context counters** — event-time request volume, path repetition, failures and measured slow responses per server/source
+2. **Signature rules** — SQL injection, XSS, path traversal, brute force, scanner/recon patterns
+3. **Behavioural aggregation** — summarize real server/source traffic windows; an independent scheduled worker scores completed windows, even if a source stops sending requests. Compatible IsolationForest models engage only after enough eligible data accumulates (`ML_MIN_TRAINING_WINDOWS`).
+
+Detected suspicious events are persisted, not every normal request. Traffic summaries retain normal activity for training. A finding is not proof of an attack: human investigation records the outcome. High/critical events and ML findings create deduplicated alerts.
+
+Accuracy metrics still require a real labeled holdout. Detailed detection, operations, and evaluation guides are maintained privately.
+
+---
+
+## 🐳 Docker Deployment
+
+Vanguard-360 ships a multi-service `docker-compose.yml` that boots PostgreSQL, Redis, the FastAPI backend, the Celery worker + beat, the React frontend, and the bundled Nginx ingress together.
 
 ```bash
-# Inspect services and recent logs
-docker compose ps
-docker compose logs --tail=100 backend celery_worker celery_beat
+# Build & start everything
+docker compose up --build -d
 
-# Stop the stack while keeping persistent volumes
+# Follow logs
+docker compose logs -f
+
+# Run the backend test suite inside the container
+docker compose exec backend pytest -v
+
+# Apply migrations or re-train
+docker compose exec backend alembic upgrade head
+docker compose exec backend python -m app.tasks.train_model
+
+# Tear down (keeps volumes)
 docker compose down
+
+# Tear down (removes volumes too)
+docker compose down -v
 ```
 
-`GET /api/health` reports database/Redis connectivity and background-loop, Celery, collector, and model status. Background diagnostic failures do not all change the HTTP status, so monitoring should check the JSON fields as well. Authenticated model diagnostics are available at `GET /api/ml/status` and in Settings.
+A healthchecked PostgreSQL ensures Alembic migrations only run after the DB is ready.
 
-GitHub Actions runs tests, frontend lint/build, dependency checks, Docker builds, and secret scanning. Production deployment is manually triggered. The external health-monitor workflow supports email alerts when its variables and SMTP secret are configured.
+The full production walkthrough is maintained privately and is not included in this repository.
 
-For local development checks:
+---
+
+## 🛰️ Remote Agent
+
+The agent in [`agent/`](agent/) is a small Python process that tails a local Nginx (or any line-oriented) access log and ships parsed events to your Vanguard instance over HTTPS.
+
+### Highlights
+- 🪣 **SQLite-backed spool queue** — survives crashes, network outages, and restarts
+- 🔁 **At-least-once delivery** — every event carries a stable `event_id` so the backend can deduplicate
+- 🔐 **Token-based auth** — uses the shared `COLLECTOR_TOKEN`
+- 🩺 **Heartbeat + desired-state** — the dashboard can pause and resume the agent remotely
+- 🪟 **systemd unit included** — `vanguard-agent.service` for production hosts
+
+### Install on a monitored server
 
 ```bash
-# Backend: use an activated Python 3.11 virtual environment, from backend/
-pip install -r requirements-dev.txt
-python -m pytest -q tests
-
-# Collector and monitor tests, from the repository root
-pip install -r agent/requirements.txt
-python -m pytest -q agent/test_agent.py ops/test_monitor.py
-
-# Frontend, from frontend/
-npm ci
-npm test
-npm run lint
-npm run build
+git clone https://github.com/sakawatkabir13/real-time-cyber-attack-and-monitoring-map.git
+cd real-time-cyber-attack-and-monitoring-map/agent
+sudo ./install.sh
 ```
 
-The PostgreSQL integration test requires a dedicated disposable database through `VANGUARD_TEST_DATABASE_URL`; do not point it at production. CI supplies a temporary PostgreSQL service.
+The installer drops the agent into `/opt/vanguard-agent`, writes a default `agent.conf` (pointing at `http://127.0.0.1:8080` by default — change this to your Vanguard URL), and registers the systemd unit.
 
-## Repository layout
+---
 
-```text
-backend/       FastAPI, detection/ML services, Celery tasks, migrations, tests
-frontend/      React pages, dashboard components, data hooks, frontend tests
-agent/         Collector, installer, systemd unit, tests
-nginx/         Bundled ingress configuration
-ops/           External health monitor and tests
-.github/       CI, manual deployment, health-monitor workflows
-```
+## 🛡️ Defensive-Use Disclaimer
 
-Detailed guides and deep-dive documents are maintained privately and excluded from the repository.
+1. **Monitor only what you own.** Vanguard-360 is designed for **defensive** monitoring of infrastructure you operate or have explicit written permission to monitor.
+2. **No offensive features.** The agent parses access logs and ships parsed events. It does not scan, exploit, or probe third-party systems.
+3. **Local laws apply.** Operators are responsible for ensuring their configuration and use complies with applicable laws and the policies of any upstream provider.
 
-## Security and license
+---
 
-Monitor only systems you own or have permission to monitor. Dashboard sessions and collector requests use separate credentials; keep `.env`, API keys, and tokens out of Git. Restrict access to stored logs and IP-address data. Report vulnerabilities privately to the maintainer rather than including credentials or exploit details in a public issue.
+## 🤝 Contributing
 
-Vanguard-360 is licensed under the [MIT license](LICENSE).
+We love contributions! A starter PR template is provided and our CI runs lint + tests automatically.
+
+---
+
+## 🛡️ Security
+
+Found a vulnerability? Report it privately — **do not** open a public issue. We follow coordinated disclosure and will credit reporters with consent.
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see the [`LICENSE`](./LICENSE) file for details.
+
+© 2026 **Vanguard-360 contributors**
+
+---
+
+## 🙏 Acknowledgements
+
+- [AbuseIPDB](https://www.abuseipdb.com/) — IP reputation data
+- [Groq](https://groq.com/) — blazingly fast LLM inference for threat analysis
+- [FastAPI](https://fastapi.tiangolo.com/) & [SQLAlchemy](https://www.sqlalchemy.org/) — rock-solid async backend foundations
+- [TanStack](https://tanstack.com/), [Tailwind CSS](https://tailwindcss.com/), and the [Vite](https://vitejs.dev/) team — delightful frontend DX
+- [PostgreSQL](https://www.postgresql.org/) and [Redis](https://redis.io/) — the world's most advanced open-source data stack
+- [scikit-learn](https://scikit-learn.org/) — `IsolationForest` for the behavioural scoring layer
+- Every operator running their own stack — this project exists to make that easier
+
+---
+
+<div align="center">
+
+⭐ **If you find this project useful, please consider giving it a star!** ⭐
+
+Made with 🛡️ by [@sakawatkabir13](https://github.com/sakawatkabir13)
+
+</div>
