@@ -30,9 +30,11 @@ describe('CollectorControl', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(pausedCollector)));
 
     const view = render(<CollectorControl />);
-    fireEvent.click(await screen.findByRole('button', { name: 'PAUSE AGENT' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause forwarding' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm pause' }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'RESUME AGENT' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Resume forwarding' })).toBeInTheDocument());
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/api/collectors/web-01/command',
       expect.objectContaining({

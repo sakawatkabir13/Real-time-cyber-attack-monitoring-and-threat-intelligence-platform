@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import logging
 import os
 import tempfile
@@ -13,7 +12,7 @@ import joblib
 import numpy as np
 import redis
 from sklearn.ensemble import IsolationForest
-from sqlalchemy import create_engine, desc, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -27,7 +26,7 @@ from app.services.ml_features import (
     transform_vector,
     window_values,
 )
-from app.services.scanner_detection import is_directory_enumeration
+from app.services.training_data import training_query, select_training_candidates
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -36,54 +35,8 @@ logger = logging.getLogger(__name__)
 def _select_training_rows(
     session: Session, scope: str, server_id: str
 ) -> list[TrafficWindow]:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.ML_TRAINING_DAYS)
-    minimum_requests = (
-        settings.ML_MIN_SERVER_REQUESTS
-        if scope == "server"
-        else settings.ML_MIN_SOURCE_REQUESTS
-    )
-    query = (
-        select(TrafficWindow)
-        .where(
-            TrafficWindow.scope == scope,
-            TrafficWindow.feature_schema == 3,
-            TrafficWindow.server_id == server_id,
-            TrafficWindow.window_start >= cutoff,
-            TrafficWindow.is_training_eligible.is_(True),
-            TrafficWindow.rule_threat_count == 0,
-            TrafficWindow.request_count >= minimum_requests,
-        )
-        .order_by(desc(TrafficWindow.window_start))
-        .limit(settings.ML_MAX_TRAINING_WINDOWS * 4)
-    )
-    candidates = list(session.scalars(query))
-
-    # Prevent one noisy source from dominating its server's behavioral baseline.
-    per_entity_limit = (
-        settings.ML_MAX_TRAINING_WINDOWS
-        if scope == "server"
-        else max(50, settings.ML_MAX_TRAINING_WINDOWS // 20)
-    )
-    counts: defaultdict[tuple[str, str], int] = defaultdict(int)
-    selected: list[TrafficWindow] = []
-    for row in candidates:
-        # Protect older rows whose eligibility was stored before this check.
-        if is_directory_enumeration(
-            request_count=row.request_count or 0,
-            unique_paths=row.unique_paths or 0,
-            top_path_share=row.top_path_share if row.top_path_share is not None else 1.0,
-            request_rate=row.request_rate or 0,
-            peak_second_requests=row.peak_second_requests or 0,
-        ):
-            continue
-        identity = (row.server_id, row.entity_key)
-        if counts[identity] >= per_entity_limit:
-            continue
-        counts[identity] += 1
-        selected.append(row)
-        if len(selected) >= settings.ML_MAX_TRAINING_WINDOWS:
-            break
-    return list(reversed(selected))
+    candidates = list(session.scalars(training_query(scope, server_id)))
+    return select_training_candidates(candidates, scope)[0]
 
 
 def _fit_scope(scope: str, rows: list[TrafficWindow]) -> tuple[dict | None, str | None]:

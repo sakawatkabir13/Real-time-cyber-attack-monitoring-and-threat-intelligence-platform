@@ -49,6 +49,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
     await redis_client.connect()
     processed = 0
     rejected = 0
+    detections = 0
     try:
         await save_analysis_status(
             job_id,
@@ -56,6 +57,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
             processed=0,
             total=total,
             rejected=0,
+            detections=0,
             error=None,
         )
         pending: list[PendingThreat] = []
@@ -74,6 +76,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
                     detected = await detection_engine.process_log(log_entry)
                     if detected:
                         pending.append(PendingThreat(detected, event_id))
+                        detections += 1
                 processed += 1
                 if len(pending) >= 100 or processed % 100 == 0:
                     async with AsyncSessionLocal() as db:
@@ -85,6 +88,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
                         processed=processed,
                         total=total,
                         rejected=rejected,
+                        detections=detections,
                     )
             if pending:
                 async with AsyncSessionLocal() as db:
@@ -95,6 +99,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
             processed=processed,
             total=total,
             rejected=rejected,
+            detections=detections,
             error=None,
         )
     except Exception as exc:
@@ -105,6 +110,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
             processed=processed,
             total=total,
             rejected=rejected,
+            detections=detections,
             error=str(exc)[:2000],
         )
         raise

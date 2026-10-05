@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import type { ThreatEvent } from '@/hooks/useThreatFeed';
+import { useInvestigation } from '@/components/EventInspector';
 import { Search, Shield, Loader2, Brain, Globe, AlertTriangle, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
@@ -6,7 +8,8 @@ import { useToast } from '@/hooks/use-toast';
 type DbThreat = {
   id: string;
   ip: string;
-  port: number;
+  port: number | null;
+  event?: ThreatEvent;
   type: string;
   severity: string;
   created_at: string;
@@ -54,7 +57,12 @@ const CATEGORY_NAMES: Record<number, string> = {
 };
 
 export default function IPLookup() {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(new URLSearchParams(window.location.search).get('ip') || '');
+  const [resultIp, setResultIp] = useState('');
+  const [lookedUpAt, setLookedUpAt] = useState('');
+  const [lookupError, setLookupError] = useState('');
+  const requestVersion = useRef(0);
+  const { inspectEvent } = useInvestigation();
   const [profile, setProfile] = useState<DbIPProfile | null>(null);
   const [threats, setThreats] = useState<DbThreat[]>([]);
   const [abuseData, setAbuseData] = useState<AbuseIPDBData | null>(null);
@@ -65,26 +73,34 @@ export default function IPLookup() {
 
   const handleSearch = async () => {
     if (!query.trim()) return;
+    const target = query.trim();
+    const version = ++requestVersion.current;
     setLoading(true);
+    setProfile(null); setThreats([]); setResultIp(''); setLookedUpAt(''); setLookupError(''); setAnalyzingAI(false);
     setAiAnalysis(null);
     setAbuseData(null);
 
     try {
-      const res = await fetch(`/api/ip-lookup/${encodeURIComponent(query.trim())}`);
+      const res = await fetch(`/api/ip-lookup/${encodeURIComponent(target)}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || 'Failed to fetch IP data');
       }
       const data = await res.json();
+      if (version !== requestVersion.current) return;
+      setResultIp(data.profile?.ip || data.abuseData?.ip || target);
+      setLookedUpAt(data.lookedUpAt || new Date().toISOString());
 
       setProfile(data.profile);
       setThreats(data.threats || []);
       setAbuseData(data.abuseData);
 
       if (data.abuseData?.available && !data.profile && !data.abuseData.totalReports) {
-        toast({ title: 'Clean IP', description: `${query.trim()} has no abuse reports` });
+        toast({ title: 'No community reports', description: `${target} has no reports in this lookup. That does not establish safety.` });
       }
     } catch (e) {
+      if (version !== requestVersion.current) return;
+      setLookupError(e instanceof Error ? e.message : 'Could not look up this IP');
       console.error('Search error:', e);
       toast({
         title: 'Lookup Failed',
@@ -92,39 +108,42 @@ export default function IPLookup() {
         variant: 'destructive',
       });
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   };
 
   const runAIAnalysis = async () => {
+    if (!resultIp) return;
+    const version = requestVersion.current;
     setAnalyzingAI(true);
     try {
       const res = await fetch('/api/analyze-threat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip: query.trim() }),
+        body: JSON.stringify({ ip: resultIp }),
       });
       if (!res.ok) throw new Error('Failed to analyze');
       const data = await res.json();
-      setAiAnalysis(data.analysis);
+      if (version === requestVersion.current) setAiAnalysis(data.analysis);
     } catch (e) {
+      if (version !== requestVersion.current) return;
       console.error('AI analysis error:', e);
       toast({ title: 'AI Analysis Failed', description: 'Could not complete threat analysis', variant: 'destructive' });
     } finally {
-      setAnalyzingAI(false);
+      if (version === requestVersion.current) setAnalyzingAI(false);
     }
   };
 
-  const score = (abuseData?.available ? abuseData.abuseConfidenceScore : undefined) ?? profile?.score ?? 0;
-  const scoreColor = score >= 70 ? 'text-destructive' : score >= 40 ? 'text-warning' : 'text-success';
-  const scoreLabel = score >= 70 ? 'CRITICAL' : score >= 40 ? 'SUSPICIOUS' : 'LOW RISK';
-  const hasData = Boolean(profile || abuseData?.available);
+  const score = abuseData?.available ? abuseData.abuseConfidenceScore : undefined;
+  const scoreColor = score == null ? 'text-muted-foreground' : score >= 70 ? 'text-destructive' : score >= 40 ? 'text-warning' : 'text-foreground';
+  const scoreLabel = score == null ? 'UNAVAILABLE' : score >= 70 ? 'HIGH REPORTED ABUSE' : score >= 40 ? 'ELEVATED REPORTED ABUSE' : 'LOW REPORTED ABUSE';
+  const hasData = Boolean(resultIp);
 
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold font-display text-foreground">IP Lookup</h1>
-        <p className="text-sm font-mono text-muted-foreground">Real-time threat intelligence powered by AbuseIPDB</p>
+        <p className="text-sm font-mono text-muted-foreground">Local detections and external community reports, shown separately</p>
       </div>
 
       {abuseData && !abuseData.available && (
@@ -139,6 +158,7 @@ export default function IPLookup() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
             type="text"
+            aria-label="IP address to look up"
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -154,6 +174,8 @@ export default function IPLookup() {
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'SCAN'}
         </button>
       </div>
+      {lookupError && <p role="alert" className="text-destructive">{lookupError}</p>}
+      {resultIp && <p role="status" className="text-sm text-muted-foreground">Results for {resultIp} · looked up {new Date(lookedUpAt).toLocaleString()} · external data may be cached for up to one hour</p>}
 
       {hasData && (
         <div className="space-y-6">
@@ -161,9 +183,10 @@ export default function IPLookup() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Score card */}
             <div className="bg-card/80 border border-border rounded-lg p-6 flex flex-col items-center justify-center">
-              <div className={cn('text-5xl font-bold font-mono', scoreColor)}>{score}</div>
+              <div className={cn('text-5xl font-bold font-mono', scoreColor)}>{score ?? '—'}</div>
               <div className={cn('text-xs font-mono mt-1 uppercase tracking-wider', scoreColor)}>{scoreLabel}</div>
               <p className="text-xs font-mono text-muted-foreground mt-3">ABUSE CONFIDENCE</p>
+              <p className="mt-2 text-center text-xs text-muted-foreground">AbuseIPDB only. A low score does not prove an IP is safe.</p>
               {abuseData?.available && abuseData.ip && (
                 <a
                   href={`https://www.abuseipdb.com/check/${abuseData.ip}`}
@@ -179,12 +202,12 @@ export default function IPLookup() {
             {/* AbuseIPDB Details */}
             <div className="bg-card/80 border border-border rounded-lg p-6 space-y-3">
               <h3 className="text-xs font-mono text-primary uppercase tracking-wider flex items-center gap-2">
-                <Globe className="h-3 w-3" /> Real Intelligence
+                <Globe className="h-3 w-3" /> Location and network
               </h3>
               <div className="space-y-2 font-mono text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">IP</span>
-                  <span className="text-foreground">{abuseData?.ip || profile?.ip}</span>
+                  <span className="text-foreground">{resultIp}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Country</span>
@@ -208,20 +231,21 @@ export default function IPLookup() {
             {/* Stats card */}
             <div className="bg-card/80 border border-border rounded-lg p-6 space-y-3">
               <h3 className="text-xs font-mono text-primary uppercase tracking-wider flex items-center gap-2">
-                <AlertTriangle className="h-3 w-3" /> Abuse Stats
+                <AlertTriangle className="h-3 w-3" /> Community and local counts
               </h3>
               <div className="space-y-2 font-mono text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Total Reports</span>
-                  <span className="text-destructive font-bold">{abuseData?.totalReports ?? profile?.total_attacks ?? 0}</span>
+                  <span className="text-muted-foreground">AbuseIPDB reports</span>
+                  <span className="font-bold">{abuseData?.available ? abuseData.totalReports ?? 'Unknown' : 'Unavailable'}</span>
                 </div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Local detection events</span><span>{profile?.total_attacks ?? 0}</span></div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Distinct Reporters</span>
                   <span className="text-foreground">{abuseData?.numDistinctUsers ?? "—"}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Tor Exit Node</span>
-                  <span className={abuseData?.isTor ? "text-destructive" : "text-success"}>{abuseData?.isTor ? "YES" : "NO"}</span>
+                  <span>{!abuseData?.available || abuseData.isTor == null ? 'Unknown' : abuseData.isTor ? 'Yes' : 'No'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Last Report</span>
@@ -229,7 +253,7 @@ export default function IPLookup() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Whitelisted</span>
-                  <span className={abuseData?.isWhitelisted ? "text-success" : "text-muted-foreground"}>{abuseData?.isWhitelisted ? "YES" : "NO"}</span>
+                  <span>{!abuseData?.available || abuseData.isWhitelisted == null ? 'Unknown' : abuseData.isWhitelisted ? 'Yes' : 'No'}</span>
                 </div>
               </div>
             </div>
@@ -257,7 +281,7 @@ export default function IPLookup() {
               </div>
             ) : (
               <p className="text-xs font-mono text-muted-foreground">
-                Click "Run Analysis" for AI-powered threat assessment using real AbuseIPDB data
+                Analyze {resultIp} using available local detections and community reports. AI commentary is not a confirmed verdict.
               </p>
             )}
           </div>
@@ -310,14 +334,14 @@ export default function IPLookup() {
             <div className="bg-card/80 border border-border rounded-lg overflow-hidden">
               <div className="p-4 border-b border-border">
                 <h3 className="text-sm font-mono text-primary uppercase tracking-wider">
-                  Local Attack History ({threats.length} events)
+                  Local Detection History ({threats.length} newest events)
                 </h3>
               </div>
               <div className="overflow-auto max-h-[400px]">
                 <table className="w-full text-xs font-mono">
                   <thead>
                     <tr className="border-b border-border text-muted-foreground">
-                      <th className="text-left p-3">PORT</th>
+                      <th className="text-left p-3">REQUEST / EVIDENCE</th>
                       <th className="text-left p-3">TYPE</th>
                       <th className="text-left p-3">SEVERITY</th>
                       <th className="text-left p-3">TIME</th>
@@ -326,7 +350,7 @@ export default function IPLookup() {
                   <tbody>
                     {threats.map(event => (
                       <tr key={event.id} className="border-b border-border/50 hover:bg-muted/30">
-                        <td className="p-3">{event.port}</td>
+                        <td className="p-3">{event.event ? <button onClick={() => inspectEvent(event.event!)} className="min-h-10 max-w-sm break-all text-left text-primary underline">{event.event.path ? `${event.event.method || 'HTTP'} ${event.event.path}` : 'Inspect aggregated finding'}</button> : 'Not recorded'}</td>
                         <td className="p-3">
                           <span className={cn(
                             'px-2 py-0.5 rounded text-[10px] uppercase',
@@ -334,7 +358,7 @@ export default function IPLookup() {
                               ? 'bg-destructive/20 text-destructive'
                               : 'bg-warning/20 text-warning'
                           )}>
-                            {event.type.replace('_', ' ')}
+                            {event.type.replace(/_/g, ' ')}
                           </span>
                         </td>
                         <td className={cn('p-3',

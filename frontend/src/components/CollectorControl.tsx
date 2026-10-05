@@ -1,5 +1,6 @@
 import { Pause, Play } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 
 interface Collector {
   serverId: string;
@@ -12,11 +13,12 @@ interface Collector {
   lastSeen: string;
 }
 
-export default function CollectorControl({ compact = false }: { compact?: boolean }) {
+export default function CollectorControl({ compact = false, serverId = '' }: { compact?: boolean; serverId?: string }) {
   const [collectors, setCollectors] = useState<Collector[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [confirmPause, setConfirmPause] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -24,13 +26,13 @@ export default function CollectorControl({ compact = false }: { compact?: boolea
       if (!response.ok) throw new Error(`Collector status failed (${response.status})`);
       const data = await response.json() as Collector[];
       setCollectors(data);
-      setSelectedId((current) => data.some((item) => item.serverId === current)
-        ? current : data[0]?.serverId ?? '');
+      setSelectedId((current) => serverId && data.some((item) => item.serverId === serverId)
+        ? serverId : data.some((item) => item.serverId === current) ? current : data[0]?.serverId ?? '');
       setError('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Collector status unavailable');
     }
-  }, []);
+  }, [serverId]);
 
   useEffect(() => {
     void refresh();
@@ -78,8 +80,9 @@ export default function CollectorControl({ compact = false }: { compact?: boolea
           : `FORWARDING · ${selected.spoolDepth} QUEUED`;
 
   return (
-    <div className="flex items-center gap-2">
-      {collectors.length > 1 && !compact && (
+    <div className="space-y-1">
+    <div className="flex flex-wrap items-center gap-2">
+      {collectors.length > 1 && !compact && !serverId && (
         <select
           value={selectedId}
           onChange={(event) => setSelectedId(event.target.value)}
@@ -94,7 +97,7 @@ export default function CollectorControl({ compact = false }: { compact?: boolea
       <button
         type="button"
         disabled={!selected || busy}
-        onClick={() => void toggle()}
+        onClick={() => selected?.desiredState === 'running' ? setConfirmPause(true) : void toggle()}
         title={error || selected?.lastError || undefined}
         className={`flex items-center gap-2 rounded-md border px-3 py-2 font-mono text-xs disabled:opacity-50 ${
           selected?.desiredState === 'running'
@@ -104,7 +107,7 @@ export default function CollectorControl({ compact = false }: { compact?: boolea
       >
         {selected?.desiredState === 'running'
           ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-        {selected?.desiredState === 'running' ? 'PAUSE AGENT' : 'RESUME AGENT'}
+        {selected?.desiredState === 'running' ? 'Pause forwarding' : 'Resume forwarding'}
       </button>
       <div className={`flex items-center gap-2 rounded-md border px-3 py-1.5 ${
         active ? 'border-primary/20 bg-primary/10' : 'border-border bg-muted'
@@ -117,6 +120,10 @@ export default function CollectorControl({ compact = false }: { compact?: boolea
           {status}
         </span>
       </div>
+    </div>
+    {selected && !compact && <p className="text-xs text-muted-foreground">{selected.serverId} · last heartbeat {new Date(selected.lastSeen).toLocaleTimeString()}</p>}
+    {(error || selected?.lastError) && <p role="alert" className="max-w-sm break-words text-sm text-destructive">{error || selected?.lastError}</p>}
+    <Dialog open={confirmPause} onOpenChange={setConfirmPause}><DialogContent><DialogTitle>Pause log forwarding?</DialogTitle><DialogDescription>{selected?.serverId} will queue new log records locally while forwarding is paused. Detection of those records is delayed until you resume. Map animation controls are independent.</DialogDescription><div className="flex justify-end gap-3"><button onClick={() => setConfirmPause(false)} className="rounded border border-border px-4 py-2">Cancel</button><button onClick={() => { setConfirmPause(false); void toggle(); }} className="rounded bg-destructive px-4 py-2 text-destructive-foreground">Confirm pause</button></div></DialogContent></Dialog>
     </div>
   );
 }

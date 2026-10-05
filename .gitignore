@@ -48,3 +48,10 @@ backend/celerybeat-schedule*
 docker-compose.override.yml
 backups/
 secrets/
+
+# Private Vanguard guides and deep dives (keep local copies only)
+/docs/
+/VANGUARD_DEPLOY_DETAILED.md
+/VPS_DEPLOYMENT_GUIDE.md
+/vanguard360_latest_comprehensive_deep_dive.md
+/demo/VPS_PRACTICE.md

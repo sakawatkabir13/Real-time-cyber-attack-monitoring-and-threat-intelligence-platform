@@ -30,6 +30,8 @@ export interface Stats {
   uniqueIPs: number;
   topAttackTypes: { type: string; count: number }[];
   threatsByHour: { hour: string; count: number }[];
+  periodHours?: number;
+  bucketSeconds?: number;
 }
 
 export const isMlAnomaly = (event: ThreatEvent) =>
@@ -56,7 +58,7 @@ const emptyStats: Stats = {
   threatsByHour: [],
 };
 
-export function useThreatFeed() {
+export function useThreatFeed({ hours, serverId = '' }: { hours?: number; serverId?: string } = {}) {
   const [events, setEvents] = useState<ThreatEvent[]>([]);
   const [mlEvents, setMlEvents] = useState<ThreatEvent[]>([]);
   const [stats, setStats] = useState<Stats>(emptyStats);
@@ -64,31 +66,43 @@ export function useThreatFeed() {
   const ws = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
   const autoRefresh = useAppStore((state) => state.settings.autoRefresh);
+  const [connection, setConnection] = useState('connecting');
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setEvents([]); setMlEvents([]); setStats(emptyStats); setLiveEvent(null); setUpdatedAt(null); setErrors({});
+    setConnection(autoRefresh ? 'connecting' : 'paused');
+    const filters = new URLSearchParams();
+    if (hours) filters.set('hours', String(hours));
+    if (serverId) filters.set('server_id', serverId);
+    const suffix = filters.size ? `&${filters}` : '';
     const loadEvents = async (url: string, update: (events: ThreatEvent[]) => void) => {
       try {
         const response = await fetch(url);
-        if (!response.ok) return;
+        if (!response.ok) throw new Error(`Event snapshot failed (${response.status})`);
         const fetched = await response.json() as ThreatEvent[];
-        if (!cancelled) update(fetched);
+        if (!cancelled) { update(fetched); setErrors((current) => ({ ...current, [url]: '' })); }
       } catch (error) {
+        if (!cancelled) setErrors((current) => ({ ...current, [url]: error instanceof Error ? error.message : 'Events unavailable' }));
         console.error(error);
       }
     };
-    const loadThreats = () => loadEvents('/api/events?limit=500',
+    const loadThreats = () => loadEvents('/api/events?limit=500' + suffix,
       (fetched) => setEvents((current) => mergeThreatEvents(current, fetched)));
-    const loadMlEvents = () => loadEvents('/api/events?ml_only=true&limit=20',
+    const loadMlEvents = () => loadEvents('/api/events?ml_only=true&limit=20' + suffix,
       (fetched) => setMlEvents((current) => mergeThreatEvents(current, fetched, 20)));
     const loadStats = async () => {
       try {
-        const response = await fetch('/api/stats');
+        const response = await fetch('/api/stats' + (filters.size ? `?${filters}` : ''));
         if (response.ok) {
           const data = await response.json() as Stats;
-          if (!cancelled) setStats(data);
-        }
+          if (!cancelled) { setStats(data); setUpdatedAt(new Date().toISOString()); setErrors((current) => ({ ...current, stats: '' })); }
+        } else throw new Error(`Statistics unavailable (${response.status})`);
       } catch (error) {
+        if (!cancelled) setErrors((current) => ({ ...current, stats: error instanceof Error ? error.message : 'Statistics unavailable' }));
         console.error(error);
       }
     };
@@ -106,6 +120,8 @@ export function useThreatFeed() {
         const socket = new WebSocket(wsUrl);
         ws.current = socket;
         socket.onopen = () => {
+          if (cancelled) return;
+          setConnection('live');
           // Fetch the recent snapshot again after every reconnection.
           void loadThreats();
           void loadMlEvents();
@@ -113,10 +129,13 @@ export function useThreatFeed() {
           void useAppStore.getState().loadAlerts();
         };
         socket.onmessage = (message) => {
+          if (cancelled) return;
           try {
             const data = JSON.parse(message.data);
             if (data.type === 'NEW_THREAT') {
               const event = data.data as ThreatEvent;
+              if (serverId && event.server_id !== serverId) return;
+              if (hours && Date.parse(event.timestamp) < Date.now() - hours * 3600000) return;
               setLiveEvent(event);
               setEvents((current) => mergeThreatEvents(current, [event]));
               if (isMlAnomaly(event)) {
@@ -130,9 +149,10 @@ export function useThreatFeed() {
           }
         };
         socket.onclose = () => {
-          if (!cancelled) reconnectTimer.current = window.setTimeout(connectWs, 3000);
+          if (!cancelled) { setConnection('disconnected'); reconnectTimer.current = window.setTimeout(connectWs, 3000); }
         };
       } catch (error) {
+        if (!cancelled) setConnection('disconnected');
         console.error('WS connection error', error);
         if (!cancelled) reconnectTimer.current = window.setTimeout(connectWs, 3000);
       }
@@ -153,7 +173,8 @@ export function useThreatFeed() {
         ws.current.close();
       }
     };
-  }, [autoRefresh]);
+  }, [autoRefresh, hours, serverId, refreshVersion]);
 
-  return { events, mlEvents, stats, liveEvent };
+  const cutoff = hours ? Date.now() - hours * 3600000 : 0;
+  return { events: events.filter((event) => Date.parse(event.timestamp) >= cutoff), mlEvents: mlEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), stats, liveEvent, connection, updatedAt, error: Object.values(errors).filter(Boolean).join(' · '), refresh: () => setRefreshVersion((value) => value + 1) };
 }

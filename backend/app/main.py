@@ -50,6 +50,7 @@ from app.services.abuseipdb import check_ip_abuse
 from app.services.event_pipeline import serialize_event
 from app.services.geo_lookup import geo_lookup
 from app.services.ml_engine import ml_engine
+from app.services.training_data import training_query, select_training_candidates
 from app.websocket_manager import WEBSOCKET_RELAY_HEARTBEAT, manager
 from app.services.window_scoring import scoring_loop
 from app.services.incident_grouping import grouping_loop
@@ -240,8 +241,27 @@ async def get_events(
     limit: int = Query(default=100, ge=1, le=500),
     ml_only: bool = False,
     db: AsyncSession = Depends(get_db),
+    hours: int | None = Query(default=None, ge=1, le=168),
+    server_id: str | None = None,
+    source_ip: str | None = None,
+    attack_type: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
 ):
     query = select(ThreatEvent)
+    # Plain defaults also support direct calls in diagnostic/unit tests.
+    if isinstance(hours, int):
+        query = query.where(ThreatEvent.timestamp >= datetime.now(timezone.utc) - timedelta(hours=hours))
+    for column, value in ((ThreatEvent.server_id, server_id), (ThreatEvent.source_ip, source_ip), (ThreatEvent.attack_type, attack_type)):
+        if value:
+            query = query.where(column == value)
+    for value in (since, until):
+        if value is not None and value.tzinfo is None:
+            raise HTTPException(422, "Time filters must include a timezone")
+    if since:
+        query = query.where(ThreatEvent.timestamp >= since)
+    if until:
+        query = query.where(ThreatEvent.timestamp < until)
     if ml_only:
         query = query.where(ThreatEvent.attack_type.in_((
             "server_traffic_anomaly", "source_behavior_anomaly"
@@ -253,39 +273,48 @@ async def get_events(
 
 
 @app.get("/api/stats", dependencies=[Depends(require_dashboard_auth)])
-async def get_stats(db: AsyncSession = Depends(get_db)):
+async def get_stats(db: AsyncSession = Depends(get_db), hours: int | None = Query(default=None, ge=1, le=168), server_id: str | None = None):
     client = redis_client._require_client()
-    cached = await client.get("dashboard:stats")
+    period = hours if isinstance(hours, int) else 24
+    scoped = isinstance(hours, int)
+    cache_key = f"dashboard:stats:{period}:{server_id or '*'}:{scoped}"
+    cached = await client.get(cache_key)
     if cached:
         return json.loads(cached)
 
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=24)
+    cutoff = now - timedelta(hours=period)
     minute_ago = now - timedelta(minutes=1)
-
-    total_result = await db.execute(select(func.count(ThreatEvent.id)))
-    ips_result = await db.execute(select(func.count(func.distinct(ThreatEvent.source_ip))))
+    event_filters = [ThreatEvent.server_id == server_id] if server_id else []
+    summary_filters = event_filters + ([ThreatEvent.timestamp >= cutoff, ThreatEvent.timestamp < now] if scoped else [])
+    alert_filters = [DdosAlert.server_id == server_id] if server_id else []
+    if scoped:
+        alert_filters += [DdosAlert.last_seen >= cutoff, DdosAlert.last_seen < now]
+    total_result = await db.execute(select(func.count(ThreatEvent.id)).where(*summary_filters))
+    ips_result = await db.execute(select(func.count(func.distinct(ThreatEvent.source_ip))).where(*summary_filters))
     critical_result = await db.execute(
         select(func.count(DdosAlert.id)).where(
-            DdosAlert.severity == "critical", DdosAlert.status == "new"
+            DdosAlert.severity == "critical", DdosAlert.status == "new", *alert_filters
         )
     )
     types_result = await db.execute(
         select(ThreatEvent.attack_type, func.count(ThreatEvent.id))
-        .where(ThreatEvent.timestamp >= cutoff, ThreatEvent.timestamp < now)
+        .where(ThreatEvent.timestamp >= cutoff, ThreatEvent.timestamp < now, *event_filters)
         .group_by(ThreatEvent.attack_type)
         .order_by(desc(func.count(ThreatEvent.id)))
     )
-    hour_bin = func.date_bin(text("INTERVAL '1 hour'"), ThreatEvent.timestamp, cutoff)
+    bucket_seconds = 300 if period == 1 else 3600 if period <= 24 else 21600
+    bucket_count = period * 3600 // bucket_seconds
+    hour_bin = func.date_bin(text(f"INTERVAL '{bucket_seconds} seconds'"), ThreatEvent.timestamp, cutoff)
     hour_result = await db.execute(
         select(hour_bin.label("hour_bin"), func.count(ThreatEvent.id))
-        .where(ThreatEvent.timestamp >= cutoff, ThreatEvent.timestamp < now)
+        .where(ThreatEvent.timestamp >= cutoff, ThreatEvent.timestamp < now, *event_filters)
         .group_by("hour_bin")
         .order_by("hour_bin")
     )
     recent_result = await db.execute(
         select(func.count(ThreatEvent.id)).where(
-            ThreatEvent.timestamp >= minute_ago, ThreatEvent.timestamp < now
+            ThreatEvent.timestamp >= minute_ago, ThreatEvent.timestamp < now, *event_filters
         )
     )
 
@@ -293,12 +322,12 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
     for hour, count in hour_result.all():
         if hour:
             normalized = hour.replace(tzinfo=hour.tzinfo or timezone.utc).astimezone(timezone.utc)
-            index = int((normalized - cutoff).total_seconds() // 3600)
-            if 0 <= index < 24:
+            index = int((normalized - cutoff).total_seconds() // bucket_seconds)
+            if 0 <= index < bucket_count:
                 counts[index] = count
     hourly = [
-        {"hour": (cutoff + timedelta(hours=index)).isoformat(), "count": counts.get(index, 0)}
-        for index in range(24)
+        {"hour": (cutoff + timedelta(seconds=index * bucket_seconds)).isoformat(), "count": counts.get(index, 0)}
+        for index in range(bucket_count)
     ]
     type_counts = [
         {"type": attack_type or "unknown", "count": count}
@@ -315,32 +344,36 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
         "uniqueIPs": ips_result.scalar() or 0,
         "topAttackTypes": top_types,
         "threatsByHour": hourly,
+        "periodHours": period,
+        "bucketSeconds": bucket_seconds,
+        "capturedAt": now.isoformat(),
     }
-    await client.setex("dashboard:stats", 5, json.dumps(payload))
+    await client.setex(cache_key, 5, json.dumps(payload))
     return payload
 
 
 @app.get("/api/ml/status", dependencies=[Depends(require_dashboard_auth)])
 async def ml_status(db: AsyncSession = Depends(get_db)):
     eligible_by_scope: dict[str, dict[str, int]] = {}
+    diagnostics = {}
     for scope, minimum_requests in (
         ("server", settings.ML_MIN_SERVER_REQUESTS),
         ("source", settings.ML_MIN_SOURCE_REQUESTS),
     ):
-        counts = await db.execute(
-            select(TrafficWindow.server_id, func.count(TrafficWindow.id))
-            .where(
-                TrafficWindow.scope == scope,
-                TrafficWindow.feature_schema == 3,
-                TrafficWindow.is_training_eligible.is_(True),
-                TrafficWindow.rule_threat_count == 0,
-                TrafficWindow.request_count >= minimum_requests,
-            )
-            .group_by(TrafficWindow.server_id)
-        )
-        eligible_by_scope[scope] = {
-            server_id: count for server_id, count in counts.all()
-        }
+        server_ids = list((await db.scalars(select(TrafficWindow.server_id).where(TrafficWindow.scope == scope).distinct())).all())
+        eligible_by_scope[scope] = {}
+        diagnostics[scope] = {}
+        for server_id in server_ids:
+            candidates = list((await db.scalars(training_query(scope, server_id))).all())
+            selected, scanner_excluded = select_training_candidates(candidates, scope)
+            eligible_by_scope[scope][server_id] = len(selected)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=settings.ML_TRAINING_DAYS)
+            totals = (await db.execute(select(
+                func.count(TrafficWindow.id),
+                func.count(TrafficWindow.id).filter(TrafficWindow.is_training_eligible.is_(True), TrafficWindow.rule_threat_count == 0, TrafficWindow.request_count < minimum_requests),
+                func.count(TrafficWindow.id).filter((TrafficWindow.is_training_eligible.is_(False)) | (TrafficWindow.rule_threat_count > 0)),
+            ).where(TrafficWindow.scope == scope, TrafficWindow.server_id == server_id, TrafficWindow.feature_schema == 3, TrafficWindow.window_start >= cutoff))).one()
+            diagnostics[scope][server_id] = {"totalWindows": totals[0], "tooSparse": totals[1], "ruleExcluded": totals[2], "scannerExcluded": scanner_excluded, "eligible": len(selected), "minimumRequests": minimum_requests}
     run_result = await db.execute(
         select(MlModelRun).order_by(desc(MlModelRun.trained_at)).limit(6)
     )
@@ -351,6 +384,10 @@ async def ml_status(db: AsyncSession = Depends(get_db)):
     }
     payload["eligibleWindowsByServer"] = eligible_by_scope
     payload["minimumTrainingWindows"] = settings.ML_MIN_TRAINING_WINDOWS
+    payload["trainingDays"] = settings.ML_TRAINING_DAYS
+    payload["trafficWindowSeconds"] = {"server": settings.ML_SERVER_WINDOW_SECONDS, "source": settings.ML_SOURCE_WINDOW_SECONDS}
+    payload["trainingScheduleUtc"] = "Daily at 03:30 UTC"
+    payload["trainingDiagnostics"] = diagnostics
     payload["featureSchema"] = 3
     scorer, grouper, celery_pipeline = await redis_client._require_client().mget(
         "ml:scorer:heartbeat",
@@ -449,9 +486,11 @@ async def analyze_log_file(file: UploadFile = File(...)):
 
 
 @app.get("/api/analysis-status", dependencies=[Depends(require_dashboard_auth)])
-async def analysis_status():
-    raw = await redis_client._require_client().get(LATEST_ANALYSIS_KEY)
+async def analysis_status(job_id: str | None = Query(default=None, pattern=r"^[a-f0-9]{32}$")):
+    raw = await redis_client._require_client().get(analysis_status_key(job_id) if isinstance(job_id, str) else LATEST_ANALYSIS_KEY)
     if not raw:
+        if isinstance(job_id, str):
+            raise HTTPException(404, "Analysis job not found or expired (retained for 7 days)")
         return {"state": "idle", "processed": 0, "total": 0, "rejected": 0}
     try:
         return json.loads(raw)
@@ -505,7 +544,8 @@ async def get_ip_lookup(ip: str, request: Request, db: AsyncSession = Depends(ge
             {
                 "id": str(threat.id),
                 "ip": threat.source_ip,
-                "port": 80,
+                "port": None,
+                "event": serialize_event(threat),
                 "type": threat.attack_type,
                 "severity": threat.severity,
                 "created_at": threat.timestamp.isoformat() if threat.timestamp else None,
@@ -513,6 +553,7 @@ async def get_ip_lookup(ip: str, request: Request, db: AsyncSession = Depends(ge
             for threat in threats
         ],
         "abuseData": abuse_data,
+        "lookedUpAt": datetime.now(timezone.utc).isoformat(),
     }
 
 

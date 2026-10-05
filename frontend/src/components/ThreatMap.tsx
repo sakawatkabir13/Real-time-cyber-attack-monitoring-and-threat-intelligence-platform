@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { geoInterpolate } from 'd3-geo';
 import { Info, MapPin, Pause, Play, Radio, X } from 'lucide-react';
+import { useInvestigation } from '@/components/EventInspector';
 import { useReducedMotion } from 'framer-motion';
 import { ComposableMap, Geographies, Geography, Line, Marker, ZoomableGroup } from 'react-simple-maps';
 import countries from 'world-atlas/countries-110m.json';
@@ -68,6 +69,7 @@ function eventTime(value: string): string {
 }
 
 export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
+  const { inspectEvent } = useInvestigation();
   const [activeRoutes, setActiveRoutes] = useState<ActiveRoute[]>([]);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
   const [paused, setPaused] = useState(false);
@@ -168,7 +170,7 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
             className="inline-flex items-center gap-1 rounded border border-[#31505a] px-2 py-1 text-[10px] text-slate-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-            {reducedMotion ? 'Reduced motion' : paused ? 'Resume' : 'Pause'}
+            {reducedMotion ? 'Reduced motion' : paused ? 'Resume animation' : 'Pause animation'}
           </button>
         </div>
       </div>
@@ -295,6 +297,7 @@ export default function ThreatMap({ events, liveEvent }: ThreatMapProps) {
               <dt className="text-slate-400">Time</dt>
               <dd>{new Date(selected.event.timestamp).toLocaleString()}</dd>
             </dl>
+            <button onClick={() => inspectEvent(selected.event)} className="mt-3 min-h-10 rounded border border-cyan-300/30 px-3 text-cyan-200 hover:bg-white/10">Open investigation</button>
             <p className="mt-2 border-t border-cyan-300/10 pt-2 text-[10px] text-slate-400">
               Map locations are approximate; arcs are illustrative, not measured network paths.
             </p>

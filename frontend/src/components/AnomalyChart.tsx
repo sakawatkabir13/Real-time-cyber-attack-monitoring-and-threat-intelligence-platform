@@ -1,8 +1,11 @@
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import type { ThreatEvent } from '@/hooks/useThreatFeed';
+import { useInvestigation } from '@/components/EventInspector';
 
 interface AnomalyData {
   time: string;
   score: number;
+  event?: ThreatEvent;
 }
 
 interface AnomalyChartProps {
@@ -10,6 +13,7 @@ interface AnomalyChartProps {
 }
 
 export default function AnomalyChart({ data }: AnomalyChartProps) {
+  const { inspectEvent } = useInvestigation();
   return (
     <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg p-4">
       <h3 className="text-sm font-mono text-primary uppercase tracking-wider">ML Anomaly Findings</h3>
@@ -20,7 +24,7 @@ export default function AnomalyChart({ data }: AnomalyChartProps) {
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={200}>
-          <AreaChart data={data}>
+          <AreaChart data={data} onClick={(value) => { const event = value?.activePayload?.[0]?.payload?.event as ThreatEvent | undefined; if (event) inspectEvent(event); }}>
             <defs>
               <linearGradient id="anomalyGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(0, 80%, 55%)" stopOpacity={0.3} />
@@ -34,6 +38,7 @@ export default function AnomalyChart({ data }: AnomalyChartProps) {
           </AreaChart>
         </ResponsiveContainer>
       )}
+      {data.length > 0 && <details className="text-sm"><summary className="cursor-pointer text-muted-foreground">Inspect scored findings</summary>{data.map((row, index) => row.event && <button key={row.event.id || index} onClick={() => inspectEvent(row.event!)} className="block min-h-10 w-full text-left hover:bg-muted">{row.time} · {row.score}/100</button>)}</details>}
     </div>
   );
 }

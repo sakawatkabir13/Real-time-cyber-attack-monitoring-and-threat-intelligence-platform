@@ -20,7 +20,7 @@
     --secondary-foreground: 200 10% 95%;
 
     --muted: 220 15% 15%;
-    --muted-foreground: 220 10% 55%;
+    --muted-foreground: 220 10% 68%;
 
     --accent: 180 80% 45%;
     --accent-foreground: 220 20% 6%;
@@ -76,6 +76,15 @@
     --sidebar-accent: 210 18% 86%;
     --sidebar-accent-foreground: 220 25% 12%;
     --sidebar-border: 210 18% 82%;
+    --primary: 160 90% 24%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 200 85% 30%;
+    --accent: 180 85% 25%;
+    --accent-foreground: 0 0% 100%;
+    --warning: 32 95% 30%;
+    --success: 145 80% 25%;
+    --destructive: 0 75% 42%;
+    --ring: 160 90% 24%;
   }
 }
 
@@ -87,6 +96,12 @@
   body {
     @apply bg-background text-foreground font-body antialiased;
   }
+  :where(button, a, input, select, textarea, summary):focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 3px;
+  }
+  button:not([role="switch"]), select { min-height: 2.5rem; min-width: 2.5rem; }
+  progress { accent-color: hsl(var(--primary)); }
 
   h1, h2, h3, h4, h5, h6 {
     @apply font-display;
@@ -94,6 +109,15 @@
 
   code, pre, .font-mono {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

@@ -1,5 +1,6 @@
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 import { cn } from '@/lib/utils';
+import { useInvestigation } from '@/components/EventInspector';
 
 const severityDot: Record<string, string> = {
   low: 'bg-muted-foreground',
@@ -21,6 +22,7 @@ interface ThreatTableProps {
 }
 
 export default function ThreatTable({ events, maxRows = 15 }: ThreatTableProps) {
+  const { inspectEvent } = useInvestigation();
   return (
     <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg overflow-hidden">
       <div className="p-4 border-b border-border">
@@ -56,7 +58,7 @@ export default function ThreatTable({ events, maxRows = 15 }: ThreatTableProps) 
                     <span className={severityColor[event.severity] || severityColor.low}>{event.severity.toUpperCase()}</span>
                   </div>
                 </td>
-                <td className="p-3 font-medium text-foreground">{event.source_ip}</td>
+                <td className="p-3 font-medium text-foreground"><button onClick={() => inspectEvent(event)} className="min-h-9 text-left text-primary underline" aria-label={`Inspect event ${event.id} from ${event.source_ip}`}>{event.source_ip}</button></td>
                 <td className="p-3 text-muted-foreground max-w-xs truncate" title={event.path ?? undefined}>
                   {event.path ? `${event.method || 'HTTP'} ${event.path}` : '—'}
                 </td>

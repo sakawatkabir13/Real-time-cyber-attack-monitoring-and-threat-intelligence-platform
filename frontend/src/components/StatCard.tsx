@@ -6,6 +6,7 @@ interface StatCardProps {
   value: string | number;
   icon: ReactNode;
   trend?: string;
+  description?: string;
   variant?: 'default' | 'danger' | 'warning' | 'success';
 }
 
@@ -23,7 +24,7 @@ const iconVariant = {
   success: 'text-success',
 };
 
-export default function StatCard({ title, value, icon, trend, variant = 'default' }: StatCardProps) {
+export default function StatCard({ title, value, icon, trend, description, variant = 'default' }: StatCardProps) {
   return (
     <div className={cn(
       'bg-card/80 backdrop-blur-sm border rounded-lg p-5 transition-all hover:bg-card',
@@ -33,6 +34,7 @@ export default function StatCard({ title, value, icon, trend, variant = 'default
         <div>
           <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{title}</p>
           <p className="text-2xl font-bold font-mono mt-2 text-foreground">{value}</p>
+          {description && <p className="mt-2 text-xs text-muted-foreground">{description}</p>}
           {trend && (
             <p className={cn(
               'text-xs font-mono mt-1',

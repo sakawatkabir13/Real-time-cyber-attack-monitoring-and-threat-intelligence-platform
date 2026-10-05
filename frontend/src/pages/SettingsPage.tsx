@@ -22,6 +22,10 @@ interface MlStatus {
     scope: string; serverId: string; status: string; samples: number;
     trainedAt?: string | null; error?: string | null;
   }>;
+  trainingDays?: number;
+  trafficWindowSeconds?: Record<string, number>;
+  trainingScheduleUtc?: string;
+  trainingDiagnostics?: Record<string, Record<string, { totalWindows: number; tooSparse: number; ruleExcluded: number; scannerExcluded: number; eligible: number; minimumRequests: number }>>;
 }
 
 function heartbeatTime(value?: string | null) {
@@ -34,13 +38,24 @@ function heartbeatTime(value?: string | null) {
 export default function SettingsPage() {
   const { settings, updateSettings } = useAppStore();
   const [mlStatus, setMlStatus] = useState<MlStatus | null>(null);
+  const [statusError, setStatusError] = useState('');
+  const [updatedAt, setUpdatedAt] = useState('');
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
-    fetch('/api/ml/status')
-      .then((response) => response.ok ? response.json() : Promise.reject(response))
-      .then((data) => setMlStatus(data as MlStatus))
-      .catch(() => setMlStatus(null));
-  }, []);
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/ml/status');
+        if (!response.ok) throw new Error(`ML diagnostics unavailable (${response.status})`);
+        const data = await response.json() as MlStatus;
+        if (!cancelled) { setMlStatus(data); setStatusError(''); setUpdatedAt(new Date().toISOString()); }
+      } catch (reason) { if (!cancelled) setStatusError(reason instanceof Error ? reason.message : 'ML status unavailable'); }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [refreshVersion]);
 
   return (
     <div className="p-6 h-full flex flex-col space-y-6">
@@ -79,14 +94,15 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <ShieldAlert className="w-5 h-5 text-primary" />
-              Security Thresholds
+              Alert Display
             </CardTitle>
             <CardDescription>Choose which persisted incidents appear in alert views.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label className="font-mono">Alert Sensitivity (Beta)</Label>
+              <Label htmlFor="alert-sensitivity" className="font-mono">Minimum displayed severity</Label>
               <select
+                id="alert-sensitivity"
                 value={settings.alertSensitivity}
                 onChange={(event) => updateSettings({ alertSensitivity: event.target.value as typeof settings.alertSensitivity })}
                 className="w-full bg-background border border-border rounded-md px-3 py-2 font-mono text-sm"
@@ -96,6 +112,7 @@ export default function SettingsPage() {
                 <option value="high">High</option>
                 <option value="critical">Critical Only</option>
               </select>
+              <p className="text-xs text-muted-foreground">This filters alert views. It does not change detection rules or model thresholds.</p>
             </div>
           </CardContent>
         </Card>
@@ -106,10 +123,12 @@ export default function SettingsPage() {
               <BrainCircuit className="w-5 h-5 text-primary" />
               Behavioral ML
             </CardTitle>
-            <CardDescription>Models train only from real, rule-clean traffic windows.</CardDescription>
+            <CardDescription>Models learn from real traffic that passes the baseline selection checks. Rules continue detecting while a model collects its baseline.</CardDescription>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="text-muted-foreground">{updatedAt ? `Updated ${new Date(updatedAt).toLocaleTimeString()} · refreshes every 30 seconds` : 'Loading diagnostics…'}</span><button className="rounded border border-border px-3 py-2" onClick={() => setRefreshVersion((value) => value + 1)}>Refresh ML status</button></div>
+            {statusError && <p role="alert" className="text-sm text-destructive">{statusError}. Previously displayed data may be stale.</p>}
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 font-mono text-sm">
-            <div>Status: <span className="text-primary">{mlStatus?.state ?? 'unavailable'}</span></div>
+            <div>Status: <span className="text-primary">{mlStatus?.state === 'warming_up' ? 'Collecting baseline (warming up)' : mlStatus?.state === 'ready' ? 'Model available' : 'Unavailable'}</span></div>
             <div>Version: <span className="text-muted-foreground">{mlStatus?.version ?? 'not trained'}</span></div>
             <div>Feature schema: <span className="text-muted-foreground">{mlStatus?.featureSchema ?? '—'}</span></div>
             <div>Model freshness: <span className="text-muted-foreground">{
@@ -120,8 +139,14 @@ export default function SettingsPage() {
               <div key={scope} className="rounded border border-border p-3">
                 <div className="uppercase text-xs text-muted-foreground">{scope} model</div>
                 <div className="mt-1">
-                  {mlStatus?.eligibleWindows?.[scope] ?? 0} eligible windows
+                  {mlStatus?.eligibleWindows?.[scope] ?? 0} usable baseline windows
                 </div>
+                {Object.entries(mlStatus?.trainingDiagnostics?.[scope] ?? {}).map(([server, values]) => <div key={server} className="mt-3 space-y-2 border-t border-border pt-3">
+                  <p>{server}: {values.eligible} / {mlStatus?.minimumTrainingWindows} required</p>
+                  <progress aria-label={`${server} ${scope} baseline progress`} value={Math.min(values.eligible, mlStatus?.minimumTrainingWindows || 200)} max={mlStatus?.minimumTrainingWindows || 200} className="w-full" />
+                  <p className="text-xs text-muted-foreground">Last {mlStatus?.trainingDays ?? 30} days: {values.totalWindows} windows · {values.tooSparse} below {values.minimumRequests} requests · {values.ruleExcluded} excluded by rules/review · {values.scannerExcluded} additional scan windows excluded.</p>
+                  <p className="text-xs text-muted-foreground">{values.eligible < (mlStatus?.minimumTrainingWindows || 200) ? 'Waiting for enough ordinary traffic. Empty windows and scan traffic do not build a normal baseline.' : 'Enough candidate windows. Scheduled training still checks data variation and validation before activating a model.'}</p>
+                </div>)}
                 <div className="text-xs text-muted-foreground mt-1">
                   Across {Object.keys(mlStatus?.eligibleWindowsByServer?.[scope] ?? {}).length} servers
                   {' · '}{mlStatus?.minimumTrainingWindows ?? '—'} required per server
@@ -129,6 +154,7 @@ export default function SettingsPage() {
                 </div>
               </div>
             ))}
+            <p className="sm:col-span-2 text-xs text-muted-foreground">Server window: {mlStatus?.trafficWindowSeconds?.server ?? '—'} seconds of site traffic. Source window: {mlStatus?.trafficWindowSeconds?.source ?? '—'} seconds from one IP. Training: {mlStatus?.trainingScheduleUtc ?? '—'}. Many requests in one busy window still count as one sample.</p>
             <div className="rounded border border-border p-3 sm:col-span-2 grid gap-2 sm:grid-cols-2">
               <div>Window scorer: <span className="text-muted-foreground">{heartbeatTime(mlStatus?.scorerLastSeen)}</span></div>
               <div>Incident grouping: <span className="text-muted-foreground">{heartbeatTime(mlStatus?.grouperLastSeen)}</span></div>

@@ -139,7 +139,7 @@ flowchart TD
 - **Alert deduplication** — high and critical severity events are coalesced into a single alert record with an occurrence counter rather than spamming duplicates.
 - **Collector fleet** — each agent heartbeats in, reports its desired-state, and can be paused or resumed remotely. Offline state is derived from a stale-heartbeat threshold.
 
-For deeper internals — state machines, queue/locking semantics, ERD, and deployment topology — see [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+Detailed architecture and deployment guides are maintained privately and are not included in this repository.
 
 ---
 
@@ -344,7 +344,6 @@ vanguard-360/
 ├── docker-compose.yml
 ├── .env.example
 ├── LICENSE
-├── VPS_DEPLOYMENT_GUIDE.md
 └── README.md
 ```
 
@@ -410,7 +409,7 @@ Every ingested event is evaluated in order:
 
 Detected suspicious events are persisted, not every normal request. Traffic summaries retain normal activity for training. A finding is not proof of an attack: human investigation records the outcome. High/critical events and ML findings create deduplicated alerts.
 
-See [detection improvements](docs/DETECTION_IMPROVEMENTS.md) for schema-3 features and the model transition, and [operations and evaluation](docs/OPERATIONS_IMPROVEMENTS.md) for independent-label evaluation, external monitoring, optional local geolocation, CI, and deployment. Accuracy metrics still require a real labeled holdout.
+Accuracy metrics still require a real labeled holdout. Detailed detection, operations, and evaluation guides are maintained privately.
 
 ---
 
@@ -441,7 +440,7 @@ docker compose down -v
 
 A healthchecked PostgreSQL ensures Alembic migrations only run after the DB is ready.
 
-For a full production walkthrough — including running Vanguard-360 alongside other applications on a shared host behind a reverse proxy — see [`VPS_DEPLOYMENT_GUIDE.md`](./VPS_DEPLOYMENT_GUIDE.md).
+The full production walkthrough is maintained privately and is not included in this repository.
 
 ---
 

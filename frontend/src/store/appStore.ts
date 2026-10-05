@@ -39,6 +39,8 @@ function normalizeAlert(alert: BackendAlert): Alert {
 interface AppState {
   alerts: Alert[];
   alertsLoading: boolean;
+  alertsError: string;
+  alertsUpdatedAt: string | null;
   loadAlerts: () => Promise<void>;
   upsertAlert: (alert: BackendAlert) => void;
   acknowledgeAlert: (id: string) => Promise<boolean>;
@@ -57,14 +59,17 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       alerts: [],
       alertsLoading: false,
+      alertsError: '',
+      alertsUpdatedAt: null,
       loadAlerts: async () => {
         set({ alertsLoading: true });
         try {
           const response = await fetch('/api/alerts?limit=500');
           if (!response.ok) throw new Error(`Alert request failed (${response.status})`);
           const alerts = (await response.json() as BackendAlert[]).map(normalizeAlert);
-          set({ alerts });
+          set({ alerts, alertsError: '', alertsUpdatedAt: new Date().toISOString() });
         } catch (error) {
+          set({ alertsError: error instanceof Error ? error.message : 'Alerts unavailable' });
           console.error(error);
         } finally {
           set({ alertsLoading: false });
