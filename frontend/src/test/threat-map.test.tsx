@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { geoEqualEarth, geoPath } from 'd3-geo';
 
 import ThreatMap, { routeCoordinates } from '@/components/ThreatMap';
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
@@ -8,7 +9,10 @@ import type { ThreatEvent } from '@/hooks/useThreatFeed';
 const reducedMotion = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock('react-simple-maps', () => ({
-  ComposableMap: ({ children }: { children: ReactNode }) => <svg>{children}</svg>,
+  ComposableMap: ({ children, projection, projectionConfig, width, height }: {
+    children: ReactNode; projection: string; projectionConfig: { scale: number }; width: number; height: number;
+  }) => <svg data-testid="map-projection" data-projection={projection} data-scale={projectionConfig.scale}
+    data-width={width} data-height={height}>{children}</svg>,
   ZoomableGroup: ({ children }: { children: ReactNode }) => <g>{children}</g>,
   Geographies: ({ children }: { children: (value: { geographies: [] }) => ReactNode }) =>
     <g>{children({ geographies: [] })}</g>,
@@ -47,6 +51,19 @@ beforeEach(() => { reducedMotion.mockReturnValue(false); vi.useFakeTimers(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('ThreatMap precision routes', () => {
+  it('frames the full world so long northern arcs cannot leave the default viewport', () => {
+    render(<ThreatMap events={[]} liveEvent={null} />);
+    const map = screen.getByTestId('map-projection');
+    expect(map).toHaveAttribute('data-projection', 'geoEqualEarth');
+    const width = Number(map.getAttribute('data-width'));
+    const height = Number(map.getAttribute('data-height'));
+    const projection = geoEqualEarth().scale(Number(map.getAttribute('data-scale'))).translate([width / 2, height / 2]);
+    const [[left, top], [right, bottom]] = geoPath(projection).bounds({ type: 'Sphere' });
+    expect(left).toBeGreaterThan(0);
+    expect(top).toBeGreaterThan(0);
+    expect(right).toBeLessThan(width);
+    expect(bottom).toBeLessThan(height);
+  });
   it('routes independent live sources to their monitored server, never to each other', () => {
     const bangladesh = event('bd', 23.81, 90.41);
     const germany = event('de', 52.52, 13.405);
@@ -72,6 +89,43 @@ describe('ThreatMap precision routes', () => {
     expect(points[0]).toEqual([13.405, 52.52]);
     expect(points[48]).toEqual([-77.4903, 39.0469]);
     expect(points[24][1]).toBeGreaterThan((52.52 + 39.0469) / 2);
+  });
+
+  it('separates repeat-source arcs into lanes without changing their endpoints', () => {
+    const from: [number, number] = [90.41, 23.81];
+    const to: [number, number] = [-77.4903, 39.0469];
+    const paths = [0, 1, -1].map((lane) => routeCoordinates(from, to, lane));
+    for (const path of paths) {
+      expect(path[0]).toEqual(from);
+      expect(path[48]).toEqual(to);
+      expect(path.every(([lng, lat]) => Number.isFinite(lng) && Math.abs(lng) <= 180 && Math.abs(lat) <= 90)).toBe(true);
+    }
+    expect(new Set(paths.map((path) => JSON.stringify(path[24]))).size).toBe(3);
+    // North/south routes also need separation, not just horizontal ones.
+    expect(routeCoordinates([0, -30], [0, 30], 1)[24][0]).not.toBe(0);
+  });
+
+  it('shows unique source cards inside the map while animating all three repeated requests', () => {
+    const first = { ...event('one', 23.81, 90.41), source_ip: '103.1.2.3', path: '/first' };
+    const second = { ...first, id: 'two', path: '/second' };
+    const third = { ...first, id: 'three', path: '/latest' };
+    const other = { ...event('other', 52.52, 13.4), source_ip: '198.51.100.2' };
+    const view = render(<ThreatMap events={[first, other]} liveEvent={first} uniqueRecentSources />);
+    view.rerender(<ThreatMap events={[second, first, other]} liveEvent={second} uniqueRecentSources />);
+    act(() => vi.advanceTimersByTime(300));
+    view.rerender(<ThreatMap events={[third, second, first, other]} liveEvent={third} uniqueRecentSources />);
+    act(() => vi.advanceTimersByTime(300));
+    const recent = within(screen.getByRole('region', { name: 'Recent detections' }));
+    expect(recent.getAllByRole('button')).toHaveLength(2);
+    expect(recent.getAllByText(/103\.1\.2\.3 →/)).toHaveLength(1);
+    expect(recent.getByText(/#three · \/latest/)).toBeInTheDocument();
+    expect(recent.getByText('3 detections in recent events · latest shown')).toBeInTheDocument();
+    const arcs = screen.getAllByTestId('threat-arc');
+    expect(arcs).toHaveLength(3);
+    expect(arcs.map((arc) => arc.parentElement!.getAttribute('data-event-id'))).toEqual(['one', 'two', 'three']);
+    expect(arcs.map((arc) => arc.parentElement!.getAttribute('data-lane'))).toEqual(['0', '1', '-1']);
+    fireEvent.click(recent.getByText(/#three · \/latest/));
+    expect(screen.getByRole('region', { name: 'Detection details' })).toHaveTextContent('GET /latest');
   });
 
   it('queues overflow and retains interrupted and newly arriving detections while paused', () => {

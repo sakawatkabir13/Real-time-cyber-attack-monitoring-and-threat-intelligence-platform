@@ -16,6 +16,7 @@ interface ThreatMapProps {
   events: ThreatEvent[];
   liveEvent: ThreatEvent | null;
   subscribeToDetections?: SubscribeToDetections;
+  uniqueRecentSources?: boolean;
 }
 
 type GeoPoint = [number, number];
@@ -47,10 +48,30 @@ function targetPoint(event: ThreatEvent): GeoPoint | null {
   return point(event.dest_lng, event.dest_lat);
 }
 
-export function routeCoordinates(from: GeoPoint, to: GeoPoint): GeoPoint[] {
+export function routeCoordinates(from: GeoPoint, to: GeoPoint, lane = 0): GeoPoint[] {
   const interpolate = geoInterpolate(from, to);
-  return Array.from({ length: 49 }, (_, index) =>
+  const points = Array.from({ length: 49 }, (_, index) =>
     index === 0 ? from : index === 48 ? to : interpolate(index / 48) as GeoPoint);
+  if (!lane) return points;
+  const radians = Math.PI / 180;
+  const unit = ([lng, lat]: GeoPoint) => [
+    Math.cos(lat * radians) * Math.cos(lng * radians),
+    Math.cos(lat * radians) * Math.sin(lng * radians), Math.sin(lat * radians),
+  ];
+  const a = unit(from), b = unit(to);
+  const cross = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const length = Math.hypot(...cross);
+  if (length < 1e-8) return points;
+  const normal = cross.map((value) => value / length);
+  return points.map((location, index) => {
+    if (index === 0 || index === 48) return location;
+    // Small cross-track offsets are illustrative lanes, never physical packet paths.
+    const offset = lane * 1.6 * radians * Math.sin(Math.PI * index / 48);
+    const shifted = unit(location).map((value, axis) =>
+      value * Math.cos(offset) + normal[axis] * Math.sin(offset));
+    return [Math.atan2(shifted[1], shifted[0]) / radians,
+      Math.asin(Math.max(-1, Math.min(1, shifted[2]))) / radians] as GeoPoint;
+  });
 }
 
 function detectionName(value: string): string {
@@ -61,7 +82,7 @@ function eventTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export default function ThreatMap({ events, liveEvent, subscribeToDetections }: ThreatMapProps) {
+export default function ThreatMap({ events, liveEvent, subscribeToDetections, uniqueRecentSources = false }: ThreatMapProps) {
   const { inspectEvent } = useInvestigation();
   const [playback, setPlayback] = useState(emptyPlayback);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
@@ -70,6 +91,19 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
   const reducedMotion = useReducedMotion();
   const autoRefresh = useAppStore((state) => state.settings.autoRefresh);
   const animationsEnabled = !paused && !reducedMotion;
+
+  const recentDetections = useMemo(() => {
+    if (!uniqueRecentSources) return events.map((event) => ({ event, count: 1 }));
+    const bySource = new Map<string, { event: ThreatEvent; count: number }>();
+    // Feed snapshots are newest first; retain the latest request for each IP.
+    for (const event of events) {
+      const key = event.source_ip === 'Multiple sources' ? event.server_id + ':aggregate' : event.source_ip;
+      const existing = bySource.get(key);
+      if (existing) existing.count += 1;
+      else bySource.set(key, { event, count: 1 });
+    }
+    return [...bySource.values()];
+  }, [events, uniqueRecentSources]);
 
   const historicalEvents = useMemo(() => {
     const markers = new Map<string, { event: ThreatEvent; count: number }>();
@@ -187,9 +221,9 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
           {events.some((event) => !sourcePoint(event) || !targetPoint(event)) &&
             <span className="block text-amber-200">Some detections lack location data; see cards below</span>}
         </div>
-        <ComposableMap width={1000} height={400} projection="geoMercator"
-          projectionConfig={{ scale: 155 }} className="h-full w-full">
-          <ZoomableGroup center={[0, 5]} zoom={1} minZoom={1} maxZoom={4}>
+        <ComposableMap width={1000} height={400} projection="geoEqualEarth"
+          projectionConfig={{ scale: 145 }} className="h-full w-full">
+          <ZoomableGroup center={[0, 0]} zoom={1} minZoom={1} maxZoom={4}>
             <Geographies geography={countries}>
               {({ geographies }) => geographies.map((geography) => (
                 <Geography key={geography.rsmKey} geography={geography}
@@ -226,14 +260,14 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
               );
             })}
 
-            {animationsEnabled && playback.active.map(({ event }, index) => {
+            {animationsEnabled && playback.active.map(({ event, lane }, index) => {
               const from = sourcePoint(event);
               const to = targetPoint(event);
               if (!from || !to) return null;
-              const coordinates = routeCoordinates(from, to);
+              const coordinates = routeCoordinates(from, to, lane);
               const color = severityColors[event.severity] || severityColors.low;
               return (
-                <g key={'route-' + event.id} data-event-id={event.id} pointerEvents="none">
+                <g key={'route-' + event.id} data-event-id={event.id} data-lane={lane} pointerEvents="none">
                   <Line data-testid="threat-arc" from={from} to={to} coordinates={coordinates}
                     pathLength={1} stroke={color} strokeWidth={1.4}
                     className="vanguard-route-path" />
@@ -318,15 +352,15 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
         )}
       </div>
 
-      <div className="relative z-10 flex min-h-[68px] items-center gap-3 border-t border-[#1a323a] bg-[#071218]/95 px-4 py-2">
+      <div role="region" aria-label="Recent detections" className="relative z-10 flex min-h-[68px] items-center gap-3 border-t border-[#1a323a] bg-[#071218]/95 px-4 py-2">
         <div className="hidden shrink-0 items-center gap-1 text-[10px] font-semibold tracking-widest text-cyan-200 md:flex">
           <Info className="h-3 w-3" aria-hidden="true" />
-          RECENT {events.length} DETECTIONS
+          RECENT DETECTIONS · {recentDetections.length} {uniqueRecentSources ? 'SOURCES' : 'EVENTS'}
         </div>
         <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
           {events.length === 0 ? (
             <p className="py-2 text-xs text-slate-400">No detections recorded yet</p>
-          ) : events.map((event) => (
+          ) : recentDetections.map(({ event, count }) => (
             <button key={event.id} type="button" onClick={() => showDetails(event, true)}
               className="min-w-[175px] flex-1 rounded border border-[#1c3840] bg-[#0b1b23] px-2 py-1.5 text-left text-[10px] text-slate-300 transition-colors hover:border-cyan-300/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
               <span className="flex items-center gap-1 font-semibold text-slate-100">
@@ -338,6 +372,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
                 {event.source_ip} → {event.server_id} · {eventTime(event.timestamp)}
               </span>
               <span className="block truncate text-slate-400">#{event.id} · {event.path || 'Aggregated finding'}{!sourcePoint(event) || !targetPoint(event) ? ' · Location unavailable' : ''}</span>
+              {uniqueRecentSources && <span className="block text-cyan-200">{count} {count === 1 ? 'detection' : 'detections'} in recent events · latest shown</span>}
             </button>
           ))}
         </div>

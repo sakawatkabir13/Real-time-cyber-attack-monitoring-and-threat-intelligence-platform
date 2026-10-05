@@ -150,15 +150,9 @@ class DetectionEngine:
             community_reports=int(ip_data.get("community_reports", 0) or 0),
         )
         # Completed windows are scored independently of future requests.
-        if rule_event is not None and rule_event.attack_type == "scanner":
-            # Persist only one scanner finding per source/server five-minute
-            # period. Every request still marks its windows as rule-affected.
-            bucket = int(dt.timestamp() // 300)
-            key = (f"scanner:finding:{redis_client._key_part(log.server_id)}:"
-                   f"{redis_client._key_part(log.source_ip)}:{bucket}")
-            first = await client.set(key, log.event_id, ex=8 * 86_400, nx=True)
-            if not first and await client.get(key) != log.event_id:
-                return None
+        # Preserve every distinct detected request, including repeated scanner
+        # paths from one source. Collector delivery retries are deduplicated by
+        # event_id in ingestion/persistence, not by source IP or time bucket.
         return rule_event
 
     async def _detect_rule(

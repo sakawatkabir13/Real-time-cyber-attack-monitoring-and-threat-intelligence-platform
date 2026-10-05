@@ -16,7 +16,7 @@ import fakeredis
 import fakeredis.aioredis
 import httpx
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -30,6 +30,64 @@ from app.security import require_dashboard_auth
 from app.services import event_pipeline, incident_grouping, window_scoring
 from app.services.behavioral_features import PENDING_WINDOWS
 from app.tasks import flush_traffic_windows
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("VANGUARD_TEST_DATABASE_URL"), reason="Disposable PostgreSQL URL not supplied")
+@pytest.mark.parametrize("path,kind", [
+    ("/.env", "scanner"),
+    ("/?id=1+UNION+SELECT+1", "sql_injection"),
+    ("/?q=%3Cscript%3Ealert(1)%3C/script%3E", "xss"),
+    ("/../../etc/passwd", "path_traversal"),
+])
+async def test_repeated_requests_persist_and_publish_individually_without_duplicate_delivery(monkeypatch, path, kind):
+    dsn = os.environ["VANGUARD_TEST_DATABASE_URL"]
+    assert (make_url(dsn).database or "").startswith("vanguard_test"), "Test-only database required"
+    engine = create_async_engine(dsn)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(redis_client, "redis", client)
+    monkeypatch.setattr(ingest, "AsyncSessionLocal", sessions)
+    monkeypatch.setattr(ingest, "verify_collector_token", lambda _authorization: None)
+    monkeypatch.setattr(event_pipeline.geo_lookup, "lookup", AsyncMock(return_value={"lat": 23.81, "lon": 90.41, "country": "BD"}))
+    publish = AsyncMock()
+    monkeypatch.setattr(event_pipeline.manager, "publish_json", publish)
+    server_id = "test-repeat-" + uuid.uuid4().hex[:12]
+    await client.set("ip_data:203.0.113.7", "{}")
+    stamp = datetime.now(timezone.utc).isoformat()
+    raw = dict(source_ip="203.0.113.7", timestamp=stamp, path=path,
+               status_code=200, user_agent="curl/8.0", bytes_sent=100)
+    events = [{**raw, "event_id": f"repeat-{index}"} for index in range(3)]
+    events.append({**raw, "event_id": "normal", "path": "/"})
+    batch = ingest.AgentBatch(server_id=server_id, events=events)
+    try:
+        assert (await ingest.ingest_batch(batch, authorization="test"))["duplicates"] == 0
+        async with sessions() as db:
+            stored = list(await db.scalars(select(ThreatEvent).where(ThreatEvent.server_id == server_id)))
+            assert len(stored) == 3
+            assert {item.attack_type for item in stored} == {kind}
+            assert len({item.id for item in stored}) == 3
+            alerts = list(await db.scalars(select(DdosAlert).where(DdosAlert.server_id == server_id)))
+            if kind == "scanner":
+                assert alerts == []  # Medium reconnaissance does not flood the alert queue.
+            else:
+                assert len(alerts) == 1 and alerts[0].occurrence_count == 3
+        payloads = [call.args[0]["data"] for call in publish.await_args_list if call.args[0]["type"] == "NEW_THREAT"]
+        assert {item["id"] for item in payloads} == {str(item.id) for item in stored}
+        assert len(payloads) == 3
+        published = publish.await_count
+        retry = await ingest.ingest_batch(batch, authorization="test")
+        assert retry["duplicates"] == 4
+        assert publish.await_count == published
+        async with sessions() as db:
+            assert await db.scalar(select(func.count(ThreatEvent.id)).where(ThreatEvent.server_id == server_id)) == 3
+    finally:
+        async with sessions() as db:
+            await db.execute(delete(DdosAlert).where(DdosAlert.server_id == server_id))
+            await db.execute(delete(ThreatEvent).where(ThreatEvent.server_id == server_id))
+            await db.commit()
+        await client.aclose()
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

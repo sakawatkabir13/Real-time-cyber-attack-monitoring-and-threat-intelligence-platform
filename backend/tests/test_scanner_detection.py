@@ -16,6 +16,7 @@ from app.services.log_parser import parse_event
 from app.services.scanner_detection import is_directory_enumeration
 from app.services import window_scoring
 from app.tasks.train_model import _select_training_rows
+from app.routers import ingest
 
 
 def entry(path: str, *, event_id: str = "one", ua: str = "curl/8.0"):
@@ -39,21 +40,51 @@ async def test_wordlist_filenames_are_not_sql_injection():
 
 
 @pytest.mark.asyncio
-async def test_feroxbuster_is_bounded_but_all_requests_taint_windows(monkeypatch):
+async def test_every_distinct_repeated_scanner_request_is_detected_and_taints_windows(monkeypatch):
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(redis_client, "redis", client)
     await client.set("ip_data:203.0.113.7", json.dumps({}))
     engine = DetectionEngine()
     try:
         first = entry("/exp_plus", ua="feroxbuster/2.13.1")
-        second = entry("/another-file", event_id="two", ua="feroxbuster/2.13.1")
+        second = entry("/exp_plus", event_id="two", ua="feroxbuster/2.13.1")
+        third = entry("/exp_plus", event_id="three", ua="feroxbuster/2.13.1")
         assert (await engine.process_log(first)).attack_type == "scanner"
-        assert await engine.process_log(second) is None
+        assert (await engine.process_log(second)).attack_type == "scanner"
+        assert (await engine.process_log(third)).attack_type == "scanner"
         assert (await engine.process_log(first)).attack_type == "scanner"
         bases = await client.zrange(PENDING_WINDOWS, 0, -1)
         assert len(bases) == 2
         for base in bases:
-            assert await client.hget(base, "rule_threat_count") == "2"
+            assert await client.hget(base, "rule_threat_count") == "3"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ingestion_keeps_distinct_scanner_requests_but_not_normal_traffic_or_retries(monkeypatch):
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(redis_client, "redis", client)
+    await client.set("ip_data:203.0.113.7", "{}")
+    monkeypatch.setattr(ingest, "verify_collector_token", lambda _authorization: None)
+    monkeypatch.setattr(ingest, "AsyncSessionLocal", lambda: AsyncMock())
+    persist = AsyncMock(return_value=[])
+    monkeypatch.setattr(ingest, "persist_threats", persist)
+    repeated = [entry("/.env", event_id=identity).model_dump() for identity in ("one", "two", "three")]
+    normal = entry("/", event_id="normal").model_dump()
+    batch = ingest.AgentBatch(server_id="spandan-web", events=[*repeated, normal])
+    try:
+        first = await ingest.ingest_batch(batch, authorization="test")
+        assert first["accepted"] == 4 and first["duplicates"] == 0
+        findings = persist.await_args.args[1]
+        assert [item.ingest_event_id for item in findings] == ["one", "two", "three"]
+        assert all(item.event.attack_type == "scanner" for item in findings)
+        retry = await ingest.ingest_batch(batch, authorization="test")
+        assert retry["accepted"] == 4 and retry["duplicates"] == 4
+        assert persist.await_args.args[1] == []
+        for base in await client.zrange(PENDING_WINDOWS, 0, -1):
+            assert await client.hget(base, "request_count") == "4"
+            assert await client.hget(base, "rule_threat_count") == "3"
     finally:
         await client.aclose()
 

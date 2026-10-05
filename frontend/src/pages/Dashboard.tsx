@@ -78,7 +78,7 @@ export default function Dashboard() {
 
       {/* Map */}
       <div className="h-[500px]">
-        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} />
+        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} uniqueRecentSources />
       </div>
 
       {/* Grid for Anomaly, Feed, Queue */}
