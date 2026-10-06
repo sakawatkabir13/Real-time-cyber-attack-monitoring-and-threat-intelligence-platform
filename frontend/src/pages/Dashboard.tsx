@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, Shield, Wifi } from 'lucide-react';
-import { useThreatFeed } from '@/hooks/useThreatFeed';
+import { useDetectionViewFeed } from '@/hooks/useDetectionViewFeed';
 import StatCard from '@/components/StatCard';
 import ThreatTable from '@/components/ThreatTable';
 import ThreatCharts from '@/components/ThreatCharts';
@@ -7,16 +7,13 @@ import ThreatMap from '@/components/ThreatMap';
 import AnomalyChart from '@/components/AnomalyChart';
 import LiveEventFeed from '@/components/LiveEventFeed';
 import AlertQueue from '@/components/AlertQueue';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import CollectorControl from '@/components/CollectorControl';
 import FeedStatus from '@/components/FeedStatus';
+import DetectionFilters from '@/components/DetectionFilters';
 
 export default function Dashboard() {
-  const [hours, setHours] = useState(24);
-  const [serverId, setServerId] = useState('');
-  const [servers, setServers] = useState<string[]>([]);
-  const { events, mlEvents, stats, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useThreatFeed({ hours, serverId });
-  useEffect(() => { let cancelled = false; fetch('/api/collectors').then((response) => response.ok ? response.json() : []).then((rows: Array<{ serverId: string }>) => { if (!cancelled) setServers(rows.map((row) => row.serverId)); }).catch(() => {}); return () => { cancelled = true; }; }, []);
+  const { hours, serverId, events, mlEvents, stats, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useDetectionViewFeed();
 
   const anomalyData = useMemo(() => {
     return [...mlEvents]
@@ -38,11 +35,7 @@ export default function Dashboard() {
         </div>
         <CollectorControl serverId={serverId} />
       </div>
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <label className="flex items-center gap-2">Period <select aria-label="Dashboard period" value={hours} onChange={(event) => setHours(Number(event.target.value))} className="rounded border border-border bg-card p-2"><option value={1}>Last hour</option><option value={24}>Last 24 hours</option><option value={168}>Last 7 days</option></select></label>
-        <label className="flex items-center gap-2">Server <select aria-label="Dashboard server" value={serverId} onChange={(event) => setServerId(event.target.value)} className="rounded border border-border bg-card p-2"><option value="">All servers</option>{servers.map((server) => <option key={server}>{server}</option>)}</select></label>
-        <p className="text-muted-foreground">Charts and totals use this selection. Event views show up to 500 newest matches.</p>
-      </div>
+      <DetectionFilters />
       <FeedStatus connection={connection} updatedAt={updatedAt} error={error} onRefresh={refresh} />
 
       {/* Stats */}
@@ -78,7 +71,7 @@ export default function Dashboard() {
 
       {/* Map */}
       <div className="h-[500px]">
-        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} uniqueRecentSources />
+        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} />
       </div>
 
       {/* Grid for Anomaly, Feed, Queue */}

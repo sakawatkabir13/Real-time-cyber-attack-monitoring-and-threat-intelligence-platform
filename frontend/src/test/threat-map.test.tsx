@@ -110,10 +110,10 @@ describe('ThreatMap precision routes', () => {
     const second = { ...first, id: 'two', path: '/second' };
     const third = { ...first, id: 'three', path: '/latest' };
     const other = { ...event('other', 52.52, 13.4), source_ip: '198.51.100.2' };
-    const view = render(<ThreatMap events={[first, other]} liveEvent={first} uniqueRecentSources />);
-    view.rerender(<ThreatMap events={[second, first, other]} liveEvent={second} uniqueRecentSources />);
+    const view = render(<ThreatMap events={[first, other]} liveEvent={first} />);
+    view.rerender(<ThreatMap events={[second, first, other]} liveEvent={second} />);
     act(() => vi.advanceTimersByTime(300));
-    view.rerender(<ThreatMap events={[third, second, first, other]} liveEvent={third} uniqueRecentSources />);
+    view.rerender(<ThreatMap events={[third, second, first, other]} liveEvent={third} />);
     act(() => vi.advanceTimersByTime(300));
     const recent = within(screen.getByRole('region', { name: 'Recent detections' }));
     expect(recent.getAllByRole('button')).toHaveLength(2);
@@ -247,7 +247,8 @@ describe('ThreatMap precision routes', () => {
     expect([...animated].sort()).toEqual(burst.map((item) => item.id).sort());
     expect(screen.getByText('0 animating · 0 queued')).toBeInTheDocument();
     expect(screen.getByText('×25')).toBeInTheDocument();
-    expect(screen.getAllByText(/103\.1\.2\.3 →/)).toHaveLength(25);
+    expect(screen.getAllByText(/103\.1\.2\.3 →/)).toHaveLength(1);
+    expect(screen.getByText('25 detections in recent events · latest shown')).toBeInTheDocument();
   });
 
 });

@@ -16,7 +16,6 @@ interface ThreatMapProps {
   events: ThreatEvent[];
   liveEvent: ThreatEvent | null;
   subscribeToDetections?: SubscribeToDetections;
-  uniqueRecentSources?: boolean;
 }
 
 type GeoPoint = [number, number];
@@ -82,7 +81,7 @@ function eventTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export default function ThreatMap({ events, liveEvent, subscribeToDetections, uniqueRecentSources = false }: ThreatMapProps) {
+export default function ThreatMap({ events, liveEvent, subscribeToDetections }: ThreatMapProps) {
   const { inspectEvent } = useInvestigation();
   const [playback, setPlayback] = useState(emptyPlayback);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
@@ -93,7 +92,6 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, un
   const animationsEnabled = !paused && !reducedMotion;
 
   const recentDetections = useMemo(() => {
-    if (!uniqueRecentSources) return events.map((event) => ({ event, count: 1 }));
     const bySource = new Map<string, { event: ThreatEvent; count: number }>();
     // Feed snapshots are newest first; retain the latest request for each IP.
     for (const event of events) {
@@ -103,7 +101,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, un
       else bySource.set(key, { event, count: 1 });
     }
     return [...bySource.values()];
-  }, [events, uniqueRecentSources]);
+  }, [events]);
 
   const historicalEvents = useMemo(() => {
     const markers = new Map<string, { event: ThreatEvent; count: number }>();
@@ -355,7 +353,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, un
       <div role="region" aria-label="Recent detections" className="relative z-10 flex min-h-[68px] items-center gap-3 border-t border-[#1a323a] bg-[#071218]/95 px-4 py-2">
         <div className="hidden shrink-0 items-center gap-1 text-[10px] font-semibold tracking-widest text-cyan-200 md:flex">
           <Info className="h-3 w-3" aria-hidden="true" />
-          RECENT DETECTIONS · {recentDetections.length} {uniqueRecentSources ? 'SOURCES' : 'EVENTS'}
+          RECENT DETECTIONS · {recentDetections.length} SOURCES
         </div>
         <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
           {events.length === 0 ? (
@@ -372,7 +370,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, un
                 {event.source_ip} → {event.server_id} · {eventTime(event.timestamp)}
               </span>
               <span className="block truncate text-slate-400">#{event.id} · {event.path || 'Aggregated finding'}{!sourcePoint(event) || !targetPoint(event) ? ' · Location unavailable' : ''}</span>
-              {uniqueRecentSources && <span className="block text-cyan-200">{count} {count === 1 ? 'detection' : 'detections'} in recent events · latest shown</span>}
+              <span className="block text-cyan-200">{count} {count === 1 ? 'detection' : 'detections'} in recent events · latest shown</span>
             </button>
           ))}
         </div>
