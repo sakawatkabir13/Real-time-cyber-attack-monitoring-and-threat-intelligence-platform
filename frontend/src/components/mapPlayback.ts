@@ -2,7 +2,10 @@ import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
 export const MAX_ACTIVE_ROUTES = 12;
 export const ROUTE_LIFETIME_MS = 4200;
-const ROUTE_SPACING_MS = 250;
+// Keep bursts visually grouped while retaining FIFO delivery for every event.
+// The route itself fades independently, so a shorter stagger does not create
+// a permanent trail or drop detections from the playback queue.
+const ROUTE_SPACING_MS = 120;
 
 export interface MapPlayback {
   active: { event: ThreatEvent; startedAt: number; lane: number }[];

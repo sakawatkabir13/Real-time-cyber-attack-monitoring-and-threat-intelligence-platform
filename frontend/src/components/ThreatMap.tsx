@@ -18,6 +18,8 @@ interface ThreatMapProps {
   subscribeToDetections?: SubscribeToDetections;
   mapTarget?: MapTarget | null;
   mapTargetLoading?: boolean;
+  /** Show the separate recent-detections panel (used on the dedicated map page). */
+  showRecentDetections?: boolean;
 }
 
 type GeoPoint = [number, number];
@@ -67,7 +69,7 @@ export function routeCoordinates(from: GeoPoint, to: GeoPoint, lane = 0): GeoPoi
   return points.map((location, index) => {
     if (index === 0 || index === 48) return location;
     // Small cross-track offsets are illustrative lanes, never physical packet paths.
-    const offset = lane * 1.6 * radians * Math.sin(Math.PI * index / 48);
+    const offset = lane * 2.4 * radians * Math.sin(Math.PI * index / 48);
     const shifted = unit(location).map((value, axis) =>
       value * Math.cos(offset) + normal[axis] * Math.sin(offset));
     return [Math.atan2(shifted[1], shifted[0]) / radians,
@@ -83,7 +85,14 @@ function eventTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export default function ThreatMap({ events, liveEvent, subscribeToDetections, mapTarget = null, mapTargetLoading = false }: ThreatMapProps) {
+export default function ThreatMap({
+  events,
+  liveEvent,
+  subscribeToDetections,
+  mapTarget = null,
+  mapTargetLoading = false,
+  showRecentDetections = true,
+}: ThreatMapProps) {
   const { inspectEvent } = useInvestigation();
   const [playback, setPlayback] = useState(emptyPlayback);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
@@ -188,8 +197,9 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, ma
   };
 
   return (
-    <div className="vanguard-map relative flex h-full min-h-[400px] flex-col overflow-hidden rounded-xl border border-[#1d3840] bg-[#061016] shadow-[inset_0_0_60px_rgba(0,180,190,0.035)]">
-      <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[#1a323a] bg-[#071218]/95 px-4 py-3">
+    <div className="flex h-full min-h-[400px] flex-col gap-3">
+      <div className="vanguard-map relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#1d3840] bg-[#061016] shadow-[inset_0_0_60px_rgba(0,180,190,0.035)]">
+        <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[#1a323a] bg-[#071218]/95 px-4 py-3">
         <div className="flex items-center gap-3">
           <Radio className="h-4 w-4 text-cyan-300" aria-hidden="true" />
           <div>
@@ -222,16 +232,16 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, ma
             {reducedMotion ? 'Reduced motion' : paused ? 'Resume animation' : 'Pause animation'}
           </button>
         </div>
-      </div>
+        </div>
 
-      <div className="vanguard-map-surface relative min-h-[230px] flex-1">
+        <div className="vanguard-map-surface relative min-h-[230px] flex-1">
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-cyan-300/20 bg-[#071218]/90 px-2 py-1 text-[10px] text-cyan-100">
           {playback.active.length} animating · {playback.pending.length} queued
           {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — detections retained' : 'Queued playback — not real-time packet timing'}</span>}
           {events.some((event) => !sourcePoint(event) || !targetPoint(event, configuredTarget)) &&
-            <span className="block text-amber-200">Some detections lack location data; see cards below</span>}
+            <span className="block text-amber-200">Some detections lack location data; {showRecentDetections ? 'see cards below' : 'inspect the feeds below'}</span>}
         </div>
-        <ComposableMap width={1000} height={400} projection="geoEqualEarth"
+          <ComposableMap width={1000} height={400} projection="geoEqualEarth"
           projectionConfig={{ scale: 145 }} className="h-full w-full">
           <ZoomableGroup center={[0, 0]} zoom={1} minZoom={1} maxZoom={4}>
             <Geographies geography={countries}>
@@ -313,9 +323,9 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, ma
               </Marker>
             ))}
           </ZoomableGroup>
-        </ComposableMap>
+          </ComposableMap>
 
-        {targets.length === 0 && (
+          {targets.length === 0 && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
             <div className="rounded-lg border border-cyan-400/20 bg-[#08181e]/90 px-4 py-3 text-center text-xs text-slate-300">
               <MapPin className="mx-auto mb-1 h-4 w-4 text-cyan-300" aria-hidden="true" />
@@ -326,7 +336,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, ma
           </div>
         )}
 
-        {selected && (
+          {selected && (
           <section aria-label="Detection details"
             className="absolute right-3 top-3 z-20 w-[min(18rem,calc(100%-1.5rem))] rounded-lg border border-cyan-300/30 bg-[#091820]/95 p-3 text-[11px] text-slate-200 shadow-xl backdrop-blur-md">
             <div className="mb-2 flex items-start justify-between gap-2">
@@ -361,34 +371,40 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, ma
               Map locations are approximate; arcs are illustrative, not measured network paths.
             </p>
           </section>
-        )}
+          )}
+        </div>
       </div>
 
-      <div role="region" aria-label="Recent detections" className="relative z-10 flex min-h-[68px] items-center gap-3 border-t border-[#1a323a] bg-[#071218]/95 px-4 py-2">
-        <div className="hidden shrink-0 items-center gap-1 text-[10px] font-semibold tracking-widest text-cyan-200 md:flex">
-          <Info className="h-3 w-3" aria-hidden="true" />
-          RECENT DETECTIONS · {recentDetections.length} SOURCES
+      {showRecentDetections && (
+        <div role="region" aria-label="Recent detections" className="relative z-10 shrink-0 overflow-hidden rounded-xl border border-[#1d3840] bg-[#071218]/95 shadow-[inset_0_0_30px_rgba(0,180,190,0.025)]">
+          <div className="flex items-center justify-between gap-3 border-b border-[#1a323a] px-4 py-2">
+            <div className="flex items-center gap-1 text-[10px] font-semibold tracking-widest text-cyan-200">
+              <Info className="h-3 w-3" aria-hidden="true" />
+              RECENT DETECTIONS · {recentDetections.length} SOURCES
+            </div>
+            <span className="hidden text-[10px] text-slate-500 sm:inline">Select a source to inspect its latest detection</span>
+          </div>
+          <div className="grid auto-cols-[minmax(180px,220px)] grid-flow-col gap-2 overflow-x-auto p-3">
+            {events.length === 0 ? (
+              <p className="py-2 text-xs text-slate-400">No detections recorded yet</p>
+            ) : recentDetections.map(({ event, count }) => (
+              <button key={event.id} type="button" onClick={() => showDetails(event, true)}
+                className="min-h-[92px] rounded border border-[#1c3840] bg-[#0b1b23] p-2 text-left text-[10px] text-slate-300 transition-colors hover:border-cyan-300/50 hover:bg-[#102832] focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
+                <span className="flex items-center gap-1 font-semibold text-slate-100">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: severityColors[event.severity] || severityColors.low }} />
+                  <span className="truncate">{event.country || 'Unknown'} · {detectionName(event.attack_type)}</span>
+                </span>
+                <span className="mt-1 block truncate text-slate-400">
+                  {event.source_ip} → {event.server_id} · {eventTime(event.timestamp)}
+                </span>
+                <span className="mt-1 block truncate text-slate-400">#{event.id} · {event.path || 'Aggregated finding'}{!sourcePoint(event) || !targetPoint(event, configuredTarget) ? ' · Location unavailable' : ''}</span>
+                <span className="mt-1 block text-cyan-200">{count} {count === 1 ? 'detection' : 'detections'} in recent events · latest shown</span>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
-          {events.length === 0 ? (
-            <p className="py-2 text-xs text-slate-400">No detections recorded yet</p>
-          ) : recentDetections.map(({ event, count }) => (
-            <button key={event.id} type="button" onClick={() => showDetails(event, true)}
-              className="min-w-[175px] flex-1 rounded border border-[#1c3840] bg-[#0b1b23] px-2 py-1.5 text-left text-[10px] text-slate-300 transition-colors hover:border-cyan-300/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
-              <span className="flex items-center gap-1 font-semibold text-slate-100">
-                <span className="h-1.5 w-1.5 rounded-full"
-                  style={{ backgroundColor: severityColors[event.severity] || severityColors.low }} />
-                {event.country || 'Unknown'} · {detectionName(event.attack_type)}
-              </span>
-              <span className="mt-1 block truncate text-slate-400">
-                {event.source_ip} → {event.server_id} · {eventTime(event.timestamp)}
-              </span>
-              <span className="block truncate text-slate-400">#{event.id} · {event.path || 'Aggregated finding'}{!sourcePoint(event) || !targetPoint(event, configuredTarget) ? ' · Location unavailable' : ''}</span>
-              <span className="block text-cyan-200">{count} {count === 1 ? 'detection' : 'detections'} in recent events · latest shown</span>
-            </button>
-          ))}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

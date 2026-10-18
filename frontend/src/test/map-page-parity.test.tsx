@@ -35,7 +35,20 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); useDetectionViewStore.setSta
 const assertSameMaps = () => {
   const maps = screen.getAllByTestId('map-input');
   expect(maps).toHaveLength(2);
-  expect(maps[0].textContent).toBe(maps[1].textContent);
+  const inputs = maps.map((map) => JSON.parse(map.textContent || '{}') as {
+    events: ThreatEvent[];
+    options: Record<string, unknown>;
+  });
+  // Both pages must share the same event stream and filters. The dedicated
+  // map page intentionally owns the separate recent-detections panel.
+  expect(inputs[0].events).toEqual(inputs[1].events);
+  const dashboardOptions = { ...inputs[0].options };
+  const mapOptions = { ...inputs[1].options };
+  delete dashboardOptions.showRecentDetections;
+  delete mapOptions.showRecentDetections;
+  expect(dashboardOptions).toEqual(mapOptions);
+  expect(inputs[0].options.showRecentDetections).toBe(false);
+  expect(inputs[1].options.showRecentDetections).toBe(true);
 };
 
 describe('Dashboard and Threat Map parity', () => {
