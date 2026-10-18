@@ -184,7 +184,10 @@ async def logout(response: Response):
 
 @app.get("/api/auth/status")
 async def auth_status(request: Request):
-    return {"authenticated": is_valid_session(request.cookies.get(SESSION_COOKIE))}
+    return {
+        "authenticated": settings.AUTH_DISABLED or is_valid_session(request.cookies.get(SESSION_COOKIE)),
+        "authDisabled": settings.AUTH_DISABLED,
+    }
 
 
 @app.get("/api/health")

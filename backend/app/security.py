@@ -37,6 +37,8 @@ def verify_dashboard_password(password: str) -> bool:
 
 
 def verify_collector_token(authorization: str | None) -> None:
+    # Collector authentication remains enabled even when the dashboard is
+    # temporarily public, so anonymous visitors cannot inject fake events.
     configured = settings.COLLECTOR_TOKEN
     if not configured or configured.startswith("change_me"):
         raise HTTPException(503, "Collector authentication is not configured")
@@ -54,6 +56,8 @@ def client_identifier(request: Request) -> str:
 
 
 async def require_dashboard_auth(request: Request) -> None:
+    if settings.AUTH_DISABLED:
+        return
     if not is_valid_session(request.cookies.get(SESSION_COOKIE)):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -62,4 +66,4 @@ async def require_dashboard_auth(request: Request) -> None:
 
 
 def websocket_is_authenticated(websocket: WebSocket) -> bool:
-    return is_valid_session(websocket.cookies.get(SESSION_COOKIE))
+    return settings.AUTH_DISABLED or is_valid_session(websocket.cookies.get(SESSION_COOKIE))

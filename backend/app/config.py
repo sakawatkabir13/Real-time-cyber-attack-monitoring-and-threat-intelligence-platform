@@ -18,6 +18,9 @@ class DetectionProfile(BaseModel):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     ENVIRONMENT: str = "development"
+    # Temporary public-view mode. Keep collector token authentication enabled;
+    # this flag only bypasses dashboard/session and dashboard WebSocket auth.
+    AUTH_DISABLED: bool = False
     POSTGRES_PASSWORD: str = "change_me_strong_password"
     DATABASE_URL: str = "postgresql+asyncpg://vanguard:change_me_strong_password@postgres:5432/vanguardmap"
     DATABASE_SSL: bool = False

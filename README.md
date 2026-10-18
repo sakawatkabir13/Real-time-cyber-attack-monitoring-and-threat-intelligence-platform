@@ -321,6 +321,7 @@ All variables are loaded from `.env` via `pydantic-settings`. Server-side secret
 | Variable | Required | Description |
 | --- | :---: | --- |
 | `ENVIRONMENT` | ✅ | `development` \| `production` — production refuses placeholder secrets |
+| `AUTH_DISABLED` | ⚠️ | Temporary demonstration mode; set `true` only when intentionally making dashboard/session access public |
 | `POSTGRES_PASSWORD` | ✅ | PostgreSQL password; must match the password encoded in `DATABASE_URL` |
 | `DATABASE_URL` | ✅ | Async PostgreSQL connection string |
 | `DATABASE_SSL` | ⚙️ | `true` when connecting through TLS |
@@ -351,6 +352,7 @@ Full reference with defaults lives in [`.env.example`](./.env.example).
 A few variables deserve more explanation than a table row can give:
 
 - **`CORS_ORIGINS`** — leave this empty. Frontend and API are strictly same-origin behind the bundled Nginx, so no cross-origin configuration is needed in production. Setting values here will silently widen your attack surface.
+- **`AUTH_DISABLED`** — temporary public demonstration switch. It bypasses dashboard/session and dashboard WebSocket authentication, but collector bearer-token authentication remains enabled. Set it back to `false` after the demonstration.
 - **`COOKIE_SECURE`** — must be `true` in production. The backend will refuse to boot otherwise (see `validate_production_secrets` in `backend/app/config.py`).
 - **`ML_MIN_TRAINING_WINDOWS`** — controls when the behavioural IsolationForest models engage. Set this too low and you train on noise; too high and you have no ML coverage during early deployment.
 - **`ML_ALERT_SCORE`** — the anomaly-score threshold (0–100) above which a flagged event becomes a persisted ML alert. Tune this in tandem with `ML_CONTAMINATION`.
