@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -188,6 +189,8 @@ def main() -> int:
     parser.add_argument("--server-id", default="spandan-web")
     parser.add_argument("--source-ips", default=", ".join(DEFAULT_SOURCE_IPS),
                         help="comma-separated authorized/synthetic source IPs")
+    parser.add_argument("--source-ips-file",
+                        help="read one public IP per line from a private local file")
     parser.add_argument("--output", help="JSONL output path; defaults to /tmp/vanguard-demo-<scenario>.jsonl")
     parser.add_argument("--send", action="store_true", help="send to the authenticated ingestion API")
     parser.add_argument("--backend-url", default=os.getenv("BACKEND_URL", "http://localhost"))
@@ -196,7 +199,22 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        source_ips = [item.strip() for item in args.source_ips.split(",") if item.strip()]
+        if args.source_ips_file:
+            source_ips = []
+            for line in Path(args.source_ips_file).read_text(encoding="utf-8").splitlines():
+                value = line.strip()
+                if not value or value.startswith("#"):
+                    continue
+                try:
+                    address = ipaddress.ip_address(value)
+                except ValueError as exc:
+                    raise ValueError(f"invalid source IP in file: {value}") from exc
+                if not address.is_global:
+                    raise ValueError(f"source IP is not public/global: {value}")
+                source_ips.append(str(address))
+        else:
+            source_ips = [item.strip() for item in args.source_ips.split(",") if item.strip()]
+        source_ips = list(dict.fromkeys(source_ips))
         events = generate_events(args.scenario, server_id=args.server_id, source_ips=source_ips)
         output = Path(args.output or f"/tmp/vanguard-demo-{args.scenario}.jsonl")
         output.write_text("\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8")

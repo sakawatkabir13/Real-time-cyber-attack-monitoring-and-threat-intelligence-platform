@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
-from generate_demo_events import generate_events
+from generate_demo_events import generate_events, main
 
 
 NOW = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
@@ -39,3 +40,15 @@ def test_rule_scenarios_have_expected_signatures():
     scanner = generate_events("scanner", now=NOW)
     assert len(scanner) == 20
     assert all("feroxbuster" in event["user_agent"] for event in scanner)
+
+
+def test_cli_reads_and_deduplicates_public_source_ip_file(tmp_path: Path, monkeypatch):
+    source_file = tmp_path / "source-ips.txt"
+    source_file.write_text("1.1.1.1\n8.8.8.8\n8.8.8.8\n", encoding="utf-8")
+    output = tmp_path / "events.jsonl"
+    monkeypatch.setattr("sys.argv", [
+        "generate_demo_events.py", "--scenario", "ml-burst",
+        "--source-ips-file", str(source_file), "--output", str(output),
+    ])
+    assert main() == 0
+    assert output.exists()
