@@ -21,19 +21,20 @@
 }
 
 .vanguard-route-path {
-  /* One short, dim arc per detection; repeated routes occupy adjacent lanes. */
-  stroke-dasharray: 0.12 0.88;
+  /* Keep the complete geodesic visible so a route never looks clipped while
+     the brighter tracer moves across it. Repeated routes still use lanes. */
+  stroke-dasharray: none;
   stroke-dashoffset: 0;
-  opacity: 0;
-  animation: vanguard-segment-travel 1.45s linear forwards;
+  opacity: 0.28;
+  animation: vanguard-route-fade 4.2s ease-out forwards;
 }
 
 .vanguard-route-tracer {
-  /* One bright laser segment travels along the curved route. */
-  stroke-dasharray: 0.065 0.935;
+  /* One bright laser segment travels along the complete curved route. */
+  stroke-dasharray: 0.055 0.945;
   stroke-dashoffset: 0;
   filter: drop-shadow(0 0 4px currentColor);
-  animation: vanguard-tracer-travel 1.15s linear forwards;
+  animation: vanguard-tracer-travel 1.25s linear forwards;
 }
 
 .vanguard-source-flash,
@@ -52,11 +53,9 @@
   animation: vanguard-target-pulse 1.1s ease-out 0.95s forwards;
 }
 
-@keyframes vanguard-segment-travel {
-  0% { stroke-dashoffset: 0; opacity: 0; }
-  10% { opacity: 0.28; }
-  78% { opacity: 0.18; }
-  100% { stroke-dashoffset: -0.95; opacity: 0; }
+@keyframes vanguard-route-fade {
+  0%, 84% { opacity: 0.28; }
+  100% { opacity: 0; }
 }
 
 @keyframes vanguard-tracer-travel {

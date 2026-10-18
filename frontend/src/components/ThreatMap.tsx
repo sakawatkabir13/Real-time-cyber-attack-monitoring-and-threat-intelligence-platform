@@ -174,7 +174,7 @@ export default function ThreatMap({
     const timer = window.setInterval(() => {
       const now = Date.now();
       setPlayback((current) => advancePlayback(current, now));
-    }, 100);
+    }, 50);
     return () => window.clearInterval(timer);
   }, [animationsEnabled, playback.pending.length]);
 
@@ -198,7 +198,7 @@ export default function ThreatMap({
 
   return (
     <div className="flex h-full min-h-[400px] flex-col gap-3">
-      <div className="vanguard-map relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#1d3840] bg-[#061016] shadow-[inset_0_0_60px_rgba(0,180,190,0.035)]">
+      <div className={`vanguard-map relative flex flex-col overflow-hidden rounded-xl border border-[#1d3840] bg-[#061016] shadow-[inset_0_0_60px_rgba(0,180,190,0.035)] ${showRecentDetections ? 'h-[500px] min-h-[500px] flex-none' : 'min-h-0 flex-1'}`}>
         <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[#1a323a] bg-[#071218]/95 px-4 py-3">
         <div className="flex items-center gap-3">
           <Radio className="h-4 w-4 text-cyan-300" aria-hidden="true" />
