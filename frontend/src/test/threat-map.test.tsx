@@ -136,8 +136,8 @@ describe('ThreatMap precision routes', () => {
       view.rerender(<ThreatMap events={[next, first]} liveEvent={next} />);
     }
     act(() => vi.advanceTimersByTime(3300));
-    expect(screen.getAllByTestId('threat-arc')).toHaveLength(12);
-    expect(screen.getByText('12 animating · 1 queued')).toBeInTheDocument();
+    expect(screen.getAllByTestId('threat-arc')).toHaveLength(13);
+    expect(screen.getByText('13 animating · 0 queued')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Pause map animations' }));
     expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
     expect(screen.getByText('0 animating · 13 queued')).toBeInTheDocument();
@@ -147,8 +147,8 @@ describe('ThreatMap precision routes', () => {
     act(() => vi.advanceTimersByTime(10000));
     expect(screen.getByText('0 animating · 14 queued')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Resume map animations' }));
-    expect(screen.getByTestId('threat-arc')).toBeInTheDocument();
-    expect(screen.getByText('1 animating · 13 queued')).toBeInTheDocument();
+    expect(screen.getAllByTestId('threat-arc')).toHaveLength(14);
+    expect(screen.getByText('14 animating · 0 queued')).toBeInTheDocument();
   });
 
   it('honors reduced motion and still allows inspecting historical detections', () => {

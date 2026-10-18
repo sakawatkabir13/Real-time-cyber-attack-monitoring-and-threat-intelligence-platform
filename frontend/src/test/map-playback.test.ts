@@ -3,6 +3,21 @@ import { advancePlayback, emptyPlayback, MAX_ACTIVE_ROUTES } from '@/components/
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
 describe('map playback', () => {
+  it('starts timestamp-matched multi-source bursts in one frame', () => {
+    const events = ['bd', 'de', 'us', 'au'].map((id) => ({
+      id,
+      timestamp: '2026-10-17T12:00:10Z',
+      lat: 23.81,
+      lng: 90.41,
+      dest_lat: 39.05,
+      dest_lng: -77.49,
+    } as ThreatEvent));
+    const state = advancePlayback({ ...emptyPlayback, pending: events }, 1000);
+    expect(state.active).toHaveLength(4);
+    expect(state.pending).toHaveLength(0);
+    expect(new Set(state.active.map((route) => route.startedAt))).toEqual(new Set([1000]));
+  });
+
   it('keeps separate lanes stable for overlapping routes and reuses expired lanes', () => {
     const events = ['one', 'two', 'three', 'four'].map((id) => ({
       id, lat: 23.81, lng: 90.41, dest_lat: 39.05, dest_lng: -77.49,

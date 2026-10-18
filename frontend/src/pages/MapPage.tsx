@@ -24,7 +24,7 @@ export default function MapPage() {
       </div>
       <DetectionFilters />
       <FeedStatus connection={connection} updatedAt={updatedAt} error={error} onRefresh={refresh} />
-      <div className="flex-1 min-h-[460px]">
+      <div className="w-full flex-none">
         <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} mapTarget={mapTarget} mapTargetLoading={mapTargetLoading} showRecentDetections />
       </div>
     </div>
