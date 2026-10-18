@@ -279,10 +279,10 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections, ma
               return (
                 <g key={'route-' + event.id} data-event-id={event.id} data-lane={lane} pointerEvents="none">
                   <Line data-testid="threat-arc" from={from} to={to} coordinates={coordinates}
-                    pathLength={1} stroke={color} strokeWidth={1.4}
+                    pathLength={1} stroke={color} strokeWidth={1.15}
                     className="vanguard-route-path" />
                   <Line data-testid="route-tracer" from={from} to={to} coordinates={coordinates}
-                    pathLength={1} stroke={color} strokeWidth={3.2}
+                    pathLength={1} stroke={color} strokeWidth={3.4}
                     className="vanguard-route-tracer" style={{ color }} />
                   <Marker coordinates={from}>
                     <circle r={4} fill="none" stroke={color} strokeWidth={1}
