@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { geoInterpolate } from 'd3-geo';
 import { Info, MapPin, Pause, Play, Radio, X } from 'lucide-react';
 import { useInvestigation } from '@/components/EventInspector';
 import { useReducedMotion } from 'framer-motion';
@@ -51,29 +50,36 @@ function targetPoint(event: ThreatEvent, fallback: GeoPoint | null = null): GeoP
   return point(event.dest_lng, event.dest_lat) ?? fallback;
 }
 
+function isAggregateEvent(event: ThreatEvent): boolean {
+  return event.source_ip === 'Multiple sources' || event.attack_type === 'server_traffic_anomaly';
+}
+
 export function routeCoordinates(from: GeoPoint, to: GeoPoint, lane = 0): GeoPoint[] {
-  const interpolate = geoInterpolate(from, to);
-  const points = Array.from({ length: 49 }, (_, index) =>
-    index === 0 ? from : index === 48 ? to : interpolate(index / 48) as GeoPoint);
-  if (!lane) return points;
-  const radians = Math.PI / 180;
-  const unit = ([lng, lat]: GeoPoint) => [
-    Math.cos(lat * radians) * Math.cos(lng * radians),
-    Math.cos(lat * radians) * Math.sin(lng * radians), Math.sin(lat * radians),
-  ];
-  const a = unit(from), b = unit(to);
-  const cross = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  const length = Math.hypot(...cross);
-  if (length < 1e-8) return points;
-  const normal = cross.map((value) => value / length);
-  return points.map((location, index) => {
-    if (index === 0 || index === 48) return location;
-    // Small cross-track offsets are illustrative lanes, never physical packet paths.
-    const offset = lane * 2.4 * radians * Math.sin(Math.PI * index / 48);
-    const shifted = unit(location).map((value, axis) =>
-      value * Math.cos(offset) + normal[axis] * Math.sin(offset));
-    return [Math.atan2(shifted[1], shifted[0]) / radians,
-      Math.asin(Math.max(-1, Math.min(1, shifted[2]))) / radians] as GeoPoint;
+  // A controlled bowed arc is more stable for a dashboard than a great-circle
+  // interpolation: great circles can pass over a pole or cross ±180° and make
+  // SVG paths appear to reverse direction at the top of the map.
+  // Keep longitude continuous in the SVG coordinate space. Wrapping each
+  // sample independently at ±180° is what creates the visible backward jump.
+  const deltaLng = to[0] - from[0];
+  const deltaLat = to[1] - from[1];
+  const distance = Math.hypot(deltaLng, deltaLat);
+  const headroom = Math.max(1, 82 - Math.max(Math.abs(from[1]), Math.abs(to[1])));
+  const bow = Math.min(headroom, Math.max(3, Math.min(14, distance * 0.07)));
+  const length = Math.max(1, distance);
+  const perpendicular: GeoPoint = [-deltaLat / length, deltaLng / length];
+
+  return Array.from({ length: 49 }, (_, index) => {
+    const t = index / 48;
+    if (index === 0) return from;
+    if (index === 48) return to;
+    const arc = Math.sin(Math.PI * t);
+    const baseLng = from[0] + deltaLng * t;
+    const baseLat = from[1] + deltaLat * t + bow * arc;
+    const laneOffset = lane * 2.4 * arc;
+    return [
+      Math.max(-180, Math.min(180, baseLng + perpendicular[0] * laneOffset)),
+      Math.max(-82, Math.min(82, baseLat + perpendicular[1] * laneOffset)),
+    ] as GeoPoint;
   });
 }
 
@@ -130,6 +136,11 @@ export default function ThreatMap({
     }
     return [...markers.values()];
   }, [events]);
+
+  const aggregateEvents = useMemo(
+    () => events.filter(isAggregateEvent).slice(0, 4),
+    [events],
+  );
 
   const targets = useMemo(() => {
     const byServer = new Map<string, { serverId: string; coordinates: GeoPoint }>();
@@ -240,7 +251,7 @@ export default function ThreatMap({
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-cyan-300/20 bg-[#071218]/90 px-2 py-1 text-[10px] text-cyan-100">
           {playback.active.length} animating · {playback.pending.length} queued
           {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — detections retained' : 'Queued playback — not real-time packet timing'}</span>}
-          {events.some((event) => !sourcePoint(event) || !targetPoint(event, configuredTarget)) &&
+          {events.some((event) => !isAggregateEvent(event) && (!sourcePoint(event) || !targetPoint(event, configuredTarget))) &&
             <span className="block text-amber-200">Some detections lack location data; {showRecentDetections ? 'see cards below' : 'inspect the feeds below'}</span>}
         </div>
           <ComposableMap width={1400} height={620} projection="geoEqualEarth"
@@ -324,6 +335,21 @@ export default function ThreatMap({
                 </text>
               </Marker>
             ))}
+
+            {aggregateEvents.map((event, index) => {
+              const location = targetPoint(event, configuredTarget);
+              if (!location) return null;
+              return (
+                <Marker key={'aggregate-' + event.id} coordinates={location}>
+                  <circle r={18 + index * 4} fill="none" stroke="#a78bfa" strokeWidth={1.4}
+                    className="vanguard-aggregate-pulse" />
+                  <text y={35 + index * 10} textAnchor="middle" fill="#c4b5fd" fontSize={8}
+                    fontWeight={700} letterSpacing={0.8} pointerEvents="none">
+                    ML AGGREGATE · {event.anomaly_score != null ? Math.round(event.anomaly_score) : '—'}
+                  </text>
+                </Marker>
+              );
+            })}
           </ZoomableGroup>
           </ComposableMap>
 

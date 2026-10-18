@@ -91,6 +91,14 @@ describe('ThreatMap precision routes', () => {
     expect(points[24][1]).toBeGreaterThan((52.52 + 39.0469) / 2);
   });
 
+  it('keeps seam-crossing arcs monotonic instead of reversing at the map edge', () => {
+    const points = routeCoordinates([170, 70], [-170, 70]);
+    const longitudeSteps = points.slice(1).map((point, index) =>
+      Math.abs(point[0] - points[index][0]));
+    expect(Math.max(...longitudeSteps)).toBeLessThan(10);
+    expect(points.every(([lng, lat]) => Math.abs(lng) <= 180 && Math.abs(lat) <= 82)).toBe(true);
+  });
+
   it('separates repeat-source arcs into lanes without changing their endpoints', () => {
     const from: [number, number] = [90.41, 23.81];
     const to: [number, number] = [-77.4903, 39.0469];
@@ -169,6 +177,19 @@ describe('ThreatMap precision routes', () => {
     expect(screen.getByText(/Monitored server location unavailable/)).toBeInTheDocument();
     expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
     expect(screen.queryByText('MONITORED SERVER')).not.toBeInTheDocument();
+  });
+  it('renders server-level ML findings at the destination without a missing-source warning', () => {
+    const aggregate = {
+      ...event('aggregate', 0, 0),
+      source_ip: 'Multiple sources',
+      lat: null,
+      lng: null,
+      attack_type: 'server_traffic_anomaly',
+      anomaly_score: 96,
+    };
+    render(<ThreatMap events={[aggregate]} liveEvent={aggregate} />);
+    expect(screen.queryByText(/Some detections lack location data/)).not.toBeInTheDocument();
+    expect(screen.getByText(/ML AGGREGATE · 96/)).toBeInTheDocument();
   });
   it('renders the configured server marker before the first detection arrives', () => {
     render(<ThreatMap events={[]} liveEvent={null} mapTarget={{ serverId: 'spandan-web', lat: 39.0469, lng: -77.4903 }} />);

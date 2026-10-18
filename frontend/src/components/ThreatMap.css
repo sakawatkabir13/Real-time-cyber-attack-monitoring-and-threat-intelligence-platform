@@ -38,7 +38,8 @@
 }
 
 .vanguard-source-flash,
-.vanguard-target-pulse {
+.vanguard-target-pulse,
+.vanguard-aggregate-pulse {
   transform-box: fill-box;
   transform-origin: center;
   opacity: 0;
@@ -51,6 +52,11 @@
 
 .vanguard-target-pulse {
   animation: vanguard-target-pulse 1.1s ease-out 0.95s forwards;
+}
+
+.vanguard-aggregate-pulse {
+  opacity: 0.65;
+  animation: vanguard-aggregate-pulse 1.8s ease-out infinite;
 }
 
 @keyframes vanguard-route-fade {
@@ -74,11 +80,17 @@
   100% { transform: scale(3); opacity: 0; }
 }
 
+@keyframes vanguard-aggregate-pulse {
+  0%, 100% { transform: scale(0.78); opacity: 0.22; }
+  50% { transform: scale(1.12); opacity: 0.8; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vanguard-route-path,
   .vanguard-route-tracer,
   .vanguard-source-flash,
-  .vanguard-target-pulse {
+  .vanguard-target-pulse,
+  .vanguard-aggregate-pulse {
     animation: none !important;
     opacity: 0 !important;
   }
