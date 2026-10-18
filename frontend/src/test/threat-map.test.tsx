@@ -170,6 +170,22 @@ describe('ThreatMap precision routes', () => {
     expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
     expect(screen.queryByText('MONITORED SERVER')).not.toBeInTheDocument();
   });
+  it('renders the configured server marker before the first detection arrives', () => {
+    render(<ThreatMap events={[]} liveEvent={null} mapTarget={{ serverId: 'spandan-web', lat: 39.0469, lng: -77.4903 }} />);
+    expect(screen.getByText('MONITORED SERVER')).toBeInTheDocument();
+    expect(screen.queryByText(/Monitored server location unavailable/)).not.toBeInTheDocument();
+  });
+  it('shows a loading state instead of an unavailable state while destination data is loading', () => {
+    render(<ThreatMap events={[]} liveEvent={null} mapTargetLoading />);
+    expect(screen.getByText(/Loading monitored server location/)).toBeInTheDocument();
+    expect(screen.queryByText(/Monitored server location unavailable/)).not.toBeInTheDocument();
+  });
+  it('uses the configured destination for legacy events without destination fields', () => {
+    const legacy = { ...event('legacy', 23.81, 90.41), dest_lat: null, dest_lng: null };
+    render(<ThreatMap events={[legacy]} liveEvent={legacy} mapTarget={{ serverId: 'spandan-web', lat: 39.0469, lng: -77.4903 }} />);
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByTestId('threat-arc')).toHaveAttribute('data-to', '-77.4903,39.0469');
+  });
   it('skips route animation when the source location is unknown', () => {
     const unknown = { ...event('unknown', 23.81, 90.41), lat: null, lng: null };
     render(<ThreatMap events={[unknown]} liveEvent={unknown} />);

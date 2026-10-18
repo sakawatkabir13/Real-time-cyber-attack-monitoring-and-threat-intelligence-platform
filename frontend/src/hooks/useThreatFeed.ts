@@ -23,6 +23,12 @@ export interface ThreatEvent {
   anomaly_score?: number | null;
 }
 
+export interface MapTarget {
+  serverId: string;
+  lat: number;
+  lng: number;
+}
+
 export type SubscribeToDetections = (listener: (event: ThreatEvent) => void) => () => void;
 
 export interface Stats {
@@ -64,6 +70,8 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   const [events, setEvents] = useState<ThreatEvent[]>([]);
   const [mlEvents, setMlEvents] = useState<ThreatEvent[]>([]);
   const [stats, setStats] = useState<Stats>(emptyStats);
+  const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
+  const [mapTargetLoading, setMapTargetLoading] = useState(true);
   const [liveEvent, setLiveEvent] = useState<ThreatEvent | null>(null);
   const detectionListeners = useRef(new Set<(event: ThreatEvent) => void>());
   // Notify each arrival directly: React may batch multiple latest-event updates.
@@ -82,6 +90,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   useEffect(() => {
     let cancelled = false;
     setEvents([]); setMlEvents([]); setStats(emptyStats); setLiveEvent(null); setUpdatedAt(null); setErrors({});
+    setMapTarget(null); setMapTargetLoading(true);
     setConnection(autoRefresh ? 'connecting' : 'paused');
     const filters = new URLSearchParams();
     if (hours) filters.set('hours', String(hours));
@@ -102,6 +111,19 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
       (fetched) => setEvents((current) => mergeThreatEvents(current, fetched)));
     const loadMlEvents = () => loadEvents('/api/events?ml_only=true&limit=20' + suffix,
       (fetched) => setMlEvents((current) => mergeThreatEvents(current, fetched, 20)));
+    const loadMapConfig = async () => {
+      try {
+        const response = await fetch(`/api/map-config${serverId ? `?server_id=${encodeURIComponent(serverId)}` : ''}`);
+        if (!response.ok) throw new Error(`Map configuration unavailable (${response.status})`);
+        const data = await response.json() as { target?: MapTarget | null };
+        if (!cancelled) setMapTarget(data.target ?? null);
+      } catch (error) {
+        if (!cancelled) setMapTarget(null);
+        console.error(error);
+      } finally {
+        if (!cancelled) setMapTargetLoading(false);
+      }
+    };
     const loadStats = async () => {
       try {
         const response = await fetch('/api/stats' + (filters.size ? `?${filters}` : ''));
@@ -117,6 +139,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
 
     void loadThreats();
     void loadMlEvents();
+    void loadMapConfig();
     void loadStats();
     if (!autoRefresh) return () => { cancelled = true; };
 
@@ -185,5 +208,5 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   }, [autoRefresh, hours, serverId, refreshVersion]);
 
   const cutoff = hours ? Date.now() - hours * 3600000 : 0;
-  return { events: events.filter((event) => Date.parse(event.timestamp) >= cutoff), mlEvents: mlEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), stats, liveEvent, subscribeToDetections, connection, updatedAt, error: Object.values(errors).filter(Boolean).join(' · '), refresh: () => setRefreshVersion((value) => value + 1) };
+  return { events: events.filter((event) => Date.parse(event.timestamp) >= cutoff), mlEvents: mlEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), stats, mapTarget, mapTargetLoading, liveEvent, subscribeToDetections, connection, updatedAt, error: Object.values(errors).filter(Boolean).join(' · '), refresh: () => setRefreshVersion((value) => value + 1) };
 }

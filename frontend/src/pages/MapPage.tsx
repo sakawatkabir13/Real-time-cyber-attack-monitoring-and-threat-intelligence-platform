@@ -5,7 +5,7 @@ import FeedStatus from '@/components/FeedStatus';
 import DetectionFilters from '@/components/DetectionFilters';
 
 export default function MapPage() {
-  const { hours, serverId, events, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useDetectionViewFeed();
+  const { hours, serverId, events, mapTarget, mapTargetLoading, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useDetectionViewFeed();
 
   return (
     <div className="p-6 space-y-4 h-full flex flex-col">
@@ -25,7 +25,7 @@ export default function MapPage() {
       <DetectionFilters />
       <FeedStatus connection={connection} updatedAt={updatedAt} error={error} onRefresh={refresh} />
       <div className="flex-1 min-h-[460px]">
-        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} />
+        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} mapTarget={mapTarget} mapTargetLoading={mapTargetLoading} />
       </div>
     </div>
   );

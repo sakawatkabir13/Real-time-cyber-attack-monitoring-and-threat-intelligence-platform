@@ -14,6 +14,7 @@ export default function EventInspector({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const requestVersion = useRef(0);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const alerts = useAppStore((state) => state.alerts);
   const inspectEvent = (value: ThreatEvent) => {
     requestVersion.current += 1;
@@ -38,8 +39,17 @@ export default function EventInspector({ children }: { children: ReactNode }) {
   return <InvestigationContext.Provider value={{ inspectEvent, inspectQuery: (query) => { void inspectQuery(query); } }}>
     {children}
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto">
-        <DialogTitle>{event ? 'Detection investigation' : 'Matching detection events'}</DialogTitle>
+      <DialogContent
+        className="max-h-[90dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto"
+        onOpenAutoFocus={(focusEvent) => {
+          // Keep the close button from receiving Radix's default bright focus
+          // ring when a map marker opens the investigation dialog. The title
+          // remains the accessible initial focus target for keyboard users.
+          focusEvent.preventDefault();
+          window.setTimeout(() => titleRef.current?.focus(), 0);
+        }}
+      >
+        <DialogTitle ref={titleRef} tabIndex={-1} className="focus:outline-none">{event ? 'Detection investigation' : 'Matching detection events'}</DialogTitle>
         <DialogDescription>{event ? 'Observed request and detector evidence. A detection requires investigation before confirmation.' : 'Up to 50 newest events matching your selection. Select one to inspect its evidence.'}</DialogDescription>
         {loading && <p role="status">Loading events…</p>}
         {error && <p role="alert" className="text-destructive">{error}</p>}

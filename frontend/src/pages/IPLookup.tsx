@@ -3,6 +3,7 @@ import type { ThreatEvent } from '@/hooks/useThreatFeed';
 import { useInvestigation } from '@/components/EventInspector';
 import { Search, Shield, Loader2, Brain, Globe, AlertTriangle, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { cleanAIAnalysis } from '@/lib/cleanAIAnalysis';
 import { useToast } from '@/hooks/use-toast';
 
 type DbThreat = {
@@ -124,7 +125,7 @@ export default function IPLookup() {
       });
       if (!res.ok) throw new Error('Failed to analyze');
       const data = await res.json();
-      if (version === requestVersion.current) setAiAnalysis(data.analysis);
+      if (version === requestVersion.current) setAiAnalysis(cleanAIAnalysis(String(data.analysis || 'No analysis was returned.')));
     } catch (e) {
       if (version !== requestVersion.current) return;
       console.error('AI analysis error:', e);
@@ -276,7 +277,7 @@ export default function IPLookup() {
               </button>
             </div>
             {aiAnalysis ? (
-              <div className="prose prose-sm prose-invert max-w-none font-mono text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">
+              <div className="max-w-none whitespace-pre-wrap break-words font-sans text-sm leading-7 text-foreground/90">
                 {aiAnalysis}
               </div>
             ) : (

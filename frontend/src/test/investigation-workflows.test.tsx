@@ -4,6 +4,7 @@ import IPLookup from '@/pages/IPLookup';
 import LogAnalyzerPage from '@/pages/LogAnalyzerPage';
 import EventInspector from '@/components/EventInspector';
 import ThreatTable from '@/components/ThreatTable';
+import { cleanAIAnalysis } from '@/lib/cleanAIAnalysis';
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); sessionStorage.clear(); });
@@ -11,6 +12,12 @@ const event: ThreatEvent = { id: '9', source_ip: '203.0.113.9', server_id: 'span
 const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 
 describe('investigation workflows', () => {
+  it('normalizes Markdown decoration before showing AI commentary', () => {
+    expect(cleanAIAnalysis('**Risk:**\n- Review `/admin`\n[More](https://example.com)')).toBe(
+      'Risk:\n• Review /admin\nMore',
+    );
+  });
+
   it('opens actual request evidence from the detection table', () => {
     render(<EventInspector><ThreatTable events={[event]} /></EventInspector>);
     fireEvent.click(screen.getByRole('button', { name: 'Inspect event 9 from 203.0.113.9' }));

@@ -7,7 +7,7 @@ import { useReducedMotion } from 'framer-motion';
 import { ComposableMap, Geographies, Geography, Line, Marker, ZoomableGroup } from 'react-simple-maps';
 import countries from 'world-atlas/countries-110m.json';
 
-import type { SubscribeToDetections, ThreatEvent } from '@/hooks/useThreatFeed';
+import type { MapTarget, SubscribeToDetections, ThreatEvent } from '@/hooks/useThreatFeed';
 import { advancePlayback, emptyPlayback } from './mapPlayback';
 import { useAppStore } from '@/store/appStore';
 import './ThreatMap.css';
@@ -16,6 +16,8 @@ interface ThreatMapProps {
   events: ThreatEvent[];
   liveEvent: ThreatEvent | null;
   subscribeToDetections?: SubscribeToDetections;
+  mapTarget?: MapTarget | null;
+  mapTargetLoading?: boolean;
 }
 
 type GeoPoint = [number, number];
@@ -43,8 +45,8 @@ function sourcePoint(event: ThreatEvent): GeoPoint | null {
   return point(event.lng, event.lat);
 }
 
-function targetPoint(event: ThreatEvent): GeoPoint | null {
-  return point(event.dest_lng, event.dest_lat);
+function targetPoint(event: ThreatEvent, fallback: GeoPoint | null = null): GeoPoint | null {
+  return point(event.dest_lng, event.dest_lat) ?? fallback;
 }
 
 export function routeCoordinates(from: GeoPoint, to: GeoPoint, lane = 0): GeoPoint[] {
@@ -81,7 +83,7 @@ function eventTime(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-export default function ThreatMap({ events, liveEvent, subscribeToDetections }: ThreatMapProps) {
+export default function ThreatMap({ events, liveEvent, subscribeToDetections, mapTarget = null, mapTargetLoading = false }: ThreatMapProps) {
   const { inspectEvent } = useInvestigation();
   const [playback, setPlayback] = useState(emptyPlayback);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
@@ -90,6 +92,10 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
   const reducedMotion = useReducedMotion();
   const autoRefresh = useAppStore((state) => state.settings.autoRefresh);
   const animationsEnabled = !paused && !reducedMotion;
+  const configuredTarget = useMemo(
+    () => point(mapTarget?.lng, mapTarget?.lat),
+    [mapTarget?.lat, mapTarget?.lng],
+  );
 
   const recentDetections = useMemo(() => {
     const bySource = new Map<string, { event: ThreatEvent; count: number }>();
@@ -124,21 +130,27 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
       if (coordinates) byServer.set(event.server_id, { serverId: event.server_id, coordinates });
       if (byServer.size >= 4) break;
     }
+    // Use the standalone config marker only before an event supplies a
+    // destination. This avoids rendering a duplicate marker when the event
+    // snapshot already contains the monitored server.
+    if (configuredTarget && mapTarget && byServer.size === 0) {
+      byServer.set(mapTarget.serverId, { serverId: mapTarget.serverId, coordinates: configuredTarget });
+    }
     return [...byServer.values()];
-  }, [events, liveEvent]);
+  }, [configuredTarget, events, liveEvent, mapTarget]);
 
   const enqueueDetection = useCallback((event: ThreatEvent) => {
     if (seenIds.current.has(event.id)) return;
     seenIds.current.add(event.id);
     // Bound the replay guard, not the playback queue. Pending IDs are also checked below.
     if (seenIds.current.size > 5000) seenIds.current.delete(seenIds.current.values().next().value!);
-    if (reducedMotion || !sourcePoint(event) || !targetPoint(event)) return;
+    if (reducedMotion || !sourcePoint(event) || !targetPoint(event, configuredTarget)) return;
     setPlayback((current) => {
       if (current.pending.some((item) => item.id === event.id) ||
           current.active.some((route) => route.event.id === event.id)) return current;
       return { ...current, pending: [...current.pending, event] };
     });
-  }, [reducedMotion]);
+  }, [configuredTarget, reducedMotion]);
 
   useEffect(() => subscribeToDetections?.(enqueueDetection), [subscribeToDetections, enqueueDetection]);
 
@@ -216,7 +228,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-cyan-300/20 bg-[#071218]/90 px-2 py-1 text-[10px] text-cyan-100">
           {playback.active.length} animating · {playback.pending.length} queued
           {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — detections retained' : 'Queued playback — not real-time packet timing'}</span>}
-          {events.some((event) => !sourcePoint(event) || !targetPoint(event)) &&
+          {events.some((event) => !sourcePoint(event) || !targetPoint(event, configuredTarget)) &&
             <span className="block text-amber-200">Some detections lack location data; see cards below</span>}
         </div>
         <ComposableMap width={1000} height={400} projection="geoEqualEarth"
@@ -260,7 +272,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
 
             {animationsEnabled && playback.active.map(({ event, lane }, index) => {
               const from = sourcePoint(event);
-              const to = targetPoint(event);
+              const to = targetPoint(event, configuredTarget);
               if (!from || !to) return null;
               const coordinates = routeCoordinates(from, to, lane);
               const color = severityColors[event.severity] || severityColors.low;
@@ -307,7 +319,9 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
             <div className="rounded-lg border border-cyan-400/20 bg-[#08181e]/90 px-4 py-3 text-center text-xs text-slate-300">
               <MapPin className="mx-auto mb-1 h-4 w-4 text-cyan-300" aria-hidden="true" />
-              Monitored server location unavailable. Add destination coordinates to show request routes.
+              {mapTargetLoading
+                ? 'Loading monitored server location…'
+                : 'Monitored server location unavailable. Configure destination coordinates to show request routes.'}
             </div>
           </div>
         )}
@@ -369,7 +383,7 @@ export default function ThreatMap({ events, liveEvent, subscribeToDetections }: 
               <span className="mt-1 block truncate text-slate-400">
                 {event.source_ip} → {event.server_id} · {eventTime(event.timestamp)}
               </span>
-              <span className="block truncate text-slate-400">#{event.id} · {event.path || 'Aggregated finding'}{!sourcePoint(event) || !targetPoint(event) ? ' · Location unavailable' : ''}</span>
+              <span className="block truncate text-slate-400">#{event.id} · {event.path || 'Aggregated finding'}{!sourcePoint(event) || !targetPoint(event, configuredTarget) ? ' · Location unavailable' : ''}</span>
               <span className="block text-cyan-200">{count} {count === 1 ? 'detection' : 'detections'} in recent events · latest shown</span>
             </button>
           ))}

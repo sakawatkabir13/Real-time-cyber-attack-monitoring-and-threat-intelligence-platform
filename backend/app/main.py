@@ -3,6 +3,7 @@ import ipaddress
 import json
 import logging
 from pathlib import Path
+import re
 import shutil
 import time
 import uuid
@@ -65,6 +66,28 @@ from app.tasks.analyze_logs import (
 from app.tasks.health import CELERY_PIPELINE_HEARTBEAT
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_ai_analysis(value: str) -> str:
+    """Normalize occasional Markdown returned by the AI provider.
+
+    The IP lookup panel is a plain-text operator view. Removing Markdown
+    decoration here keeps the API response readable for other clients too.
+    """
+    lines = []
+    for raw_line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw_line.strip()
+        line = re.sub(r"^#{1,6}\s+", "", line)
+        line = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", line)
+        line = re.sub(r"`{1,3}", "", line)
+        line = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", line)
+        line = re.sub(r"__([^_\n]+)__", r"\1", line)
+        line = re.sub(r"(^|\s)\*([^*\n]+)\*(?=\s|$)", r"\1\2", line)
+        line = re.sub(r"(^|\s)_([^_\n]+)_(?=\s|$)", r"\1\2", line)
+        if re.match(r"^[-*+]\s+", line):
+            line = "• " + re.sub(r"^[-*+]\s+", "", line)
+        lines.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 def _is_recent(value: str | None, maximum_age: float) -> bool:
@@ -270,6 +293,25 @@ async def get_events(
         query.order_by(desc(ThreatEvent.timestamp)).limit(limit)
     )
     return [serialize_event(event) for event in result.scalars()]
+
+
+@app.get("/api/map-config", dependencies=[Depends(require_dashboard_auth)])
+async def get_map_config(server_id: str | None = Query(default=None, max_length=64)):
+    """Return the configured destination used by the live threat maps.
+
+    Event payloads also carry these coordinates, but the map needs them before
+    the first detection arrives so it can render the monitored-server marker
+    immediately.
+    """
+    if settings.TARGET_LATITUDE is None or settings.TARGET_LONGITUDE is None:
+        return {"target": None}
+    return {
+        "target": {
+            "serverId": server_id or "monitored-server",
+            "lat": settings.TARGET_LATITUDE,
+            "lng": settings.TARGET_LONGITUDE,
+        }
+    }
 
 
 @app.get("/api/stats", dependencies=[Depends(require_dashboard_auth)])
@@ -596,7 +638,7 @@ async def analyze_threat(req: AIAnalysisRequest, request: Request, db: AsyncSess
                 json={
                     "model": settings.GROQ_MODEL,
                     "messages": [
-                        {"role": "system", "content": "You are a senior cybersecurity analyst."},
+                        {"role": "system", "content": "You are a senior cybersecurity analyst. Return concise plain text only: no Markdown headings, asterisks, tables, or raw link syntax."},
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.2,
@@ -604,7 +646,7 @@ async def analyze_threat(req: AIAnalysisRequest, request: Request, db: AsyncSess
                 },
             )
             response.raise_for_status()
-            analysis = response.json()["choices"][0]["message"]["content"]
+            analysis = _clean_ai_analysis(str(response.json()["choices"][0]["message"]["content"]))
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.warning("Groq analysis failed: %s", exc)
         raise HTTPException(503, "AI analysis provider is unavailable") from exc
