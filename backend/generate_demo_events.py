@@ -130,12 +130,19 @@ def generate_events(
         if len(ips) < 8:
             raise ValueError("distributed-dos requires at least 8 source IPs")
         start = _window_start(300, now)
-        for source_index, source in enumerate(ips[:8]):
+        # Use a larger, diverse source pool when one is available. Every
+        # source shares the same event second so the dashboard can show a
+        # synchronized fan of source-to-server routes instead of a slow,
+        # sequential stream. The ingestion client still sends safe batches;
+        # this is a timestamped simulation, not a network flood.
+        source_count = min(16, len(ips))
+        attack_stamp = start + timedelta(seconds=5)
+        for source_index, source in enumerate(ips[:source_count]):
             for offset in range(120):
                 index = source_index * 120 + offset
                 events.append(_event(
                     scenario=scenario, index=index,
-                    stamp=start + timedelta(seconds=5 + offset), source_ip=source,
+                    stamp=attack_stamp, source_ip=source,
                     path="/api/expensive", status=503, duration=4.5,
                     user_agent="Mozilla/5.0 Vanguard-Demo", server_id=server_id,
                 ))

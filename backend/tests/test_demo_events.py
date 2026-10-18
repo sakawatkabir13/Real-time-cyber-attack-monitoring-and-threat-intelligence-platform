@@ -40,7 +40,16 @@ def test_single_and_distributed_dos_have_rule_evidence():
     assert all(event["status_code"] == 503 and event["request_time"] == 4.5 for event in single)
     assert len(distributed) == 960
     assert len({event["source_ip"] for event in distributed}) == 8
+    assert len({event["timestamp"] for event in distributed}) == 1
     assert all(event["path"] == "/api/expensive" for event in distributed)
+
+
+def test_distributed_dos_uses_more_sources_when_a_diverse_pool_is_available():
+    source_ips = [f"1.1.1.{i}" for i in range(1, 25)]
+    events = generate_events("distributed-dos", source_ips=source_ips, now=NOW)
+    assert len(events) == 16 * 120
+    assert len({event["source_ip"] for event in events}) == 16
+    assert len({event["timestamp"] for event in events}) == 1
 
 
 def test_rule_scenarios_have_expected_signatures():
