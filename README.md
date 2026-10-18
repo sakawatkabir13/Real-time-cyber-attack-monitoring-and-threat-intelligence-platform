@@ -8,10 +8,10 @@
 [![Hosted on AWS](https://img.shields.io/badge/Hosted%20on-AWS%20EC2-FF9900?style=for-the-badge&logo=amazonec2&logoColor=white)](https://aws.amazon.com/ec2/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](./LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](backend/requirements.txt)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=white)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev)
+[![Vite](https://img.shields.io/badge/Vite-7-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](./docker-compose.yml)
@@ -57,32 +57,19 @@ Most teams running their own infrastructure have **no real-time visibility** int
 
 ## ✨ Features
 
-### 🧠 For Detection Engineers
-- 🩺 **Hybrid detection pipeline** — SQLi/XSS/traversal signatures, authentication-failure and contextual HTTP-flood warnings, scanner indicators, and per-source/per-server IsolationForest behavioural models
-- 🧪 **Trained on real traffic**, not synthetic data — models only engage once enough clean windows have accumulated
-- 🔁 **Zero-downtime hot-reload** the moment a newly trained model passes validation
-- 📈 **Event-time rate tracking** in Redis, measured response-time coverage, burst and change features, and scheduled completed-window scoring
+- 🛰️ **Real-time log monitoring** — ship structured access-log events from one or more authorized servers through a lightweight collector.
+- 🧠 **Hybrid detection** — combine explainable HTTP rules with behavioral anomaly scoring for known signatures and unusual traffic patterns.
+- 📊 **Behavioral analytics** — build event-time traffic windows from real observations and score completed server/source activity when models are ready.
+- 🌍 **Live threat visualization** — inspect approximate source locations, illustrative routes to the monitored destination, severity, request context, and detection evidence.
+- 🚨 **Alert lifecycle management** — deduplicate repeated findings, acknowledge alerts, record investigation outcomes, and review related activity.
+- 🔁 **Reliable ingestion** — use authenticated batches, stable event identifiers, retry-safe delivery, and out-of-order event handling.
+- 🧰 **Operational controls** — monitor collector heartbeats, view pipeline health, pause or resume authorized collectors, and apply retention cleanup.
+- 🔐 **Secure self-hosting** — protect the dashboard with signed session cookies, rate-limit sensitive endpoints, validate production secrets, and expose the stack through a single Nginx ingress.
+- 🔎 **Investigation tools** — search IP history, enrich findings with optional reputation and geolocation services, analyze historical log files, and view plain-language AI summaries.
+- 🗄️ **Durable platform services** — persist events and reviews in PostgreSQL, use Redis for windows and queues, and run scheduled work through Celery.
+- 🧪 **Developer verification** — maintain backend tests, frontend tests, linting, dependency checks, and Docker-ready local builds.
 
-### 🛰️ For Operators
-- 🧾 **Idempotent ingestion** — safe against agent retries and duplicate delivery
-- 🌍 **Live world map** of attack origins with geo-located source IPs
-- 🧯 **Persistent alerts** with acknowledgment, investigation verdicts/history, occurrence counters, and suggested related-incident groups
-- ⏸️ **Remote collector fleet management** — pause or resume log shipping per server from the dashboard, with heartbeat-based online / offline tracking
-- 🧹 **Scheduled retention cleanup** so the database doesn't grow unbounded
-
-### 🔐 For Platform Owners
-- 🔑 Session-based dashboard auth with **HMAC-signed, constant-time-compared tokens**
-- ⚡ Rate limiting on login, IP-lookup, and AI analysis endpoints
-- 🚨 **Refuses to boot in production** with default or placeholder secrets
-- 🧱 API docs disabled outside development
-- 🔒 Single Nginx ingress — frontend and backend are strictly same-origin, no CORS configuration required in production
-
-### 🧰 For Everyone
-- 🤖 Optional **Groq-powered LLM** for plain-language threat summaries
-- 🌐 Optional **AbuseIPDB** IP-reputation enrichment, cached and rate-limited
-- 📜 Optional **historical log upload** with streaming analysis and progress polling
-- 🎨 Theming and design tokens with **Tailwind CSS**
-- 🧪 Backend tests with **Pytest** + frontend tests with **Vitest** + **Testing Library**
+Detection results are investigative signals, not automatic proof of malicious intent. Source locations and map routes are approximate representations of observed HTTP data.
 
 ---
 
