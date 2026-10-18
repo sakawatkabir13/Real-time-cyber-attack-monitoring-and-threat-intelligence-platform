@@ -70,7 +70,7 @@ export default function Dashboard() {
       </div>
 
       {/* Map */}
-      <div style={{ height: 'min(78vh, 720px)' }} className="min-h-[560px]">
+      <div style={{ height: 'min(64vh, 600px)' }} className="min-h-[460px]">
         <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} mapTarget={mapTarget} mapTargetLoading={mapTargetLoading} showRecentDetections={false} />
       </div>
 
