@@ -21,6 +21,7 @@ import uuid
 
 SCENARIOS = (
     "ml-burst",
+    "ml-source-burst",
     "single-dos",
     "distributed-dos",
     "scanner",
@@ -94,6 +95,23 @@ def generate_events(
                 path="/", server_id=server_id,
                 user_agent=f"Mozilla/5.0 Vanguard-Demo-{index % 4}",
             ))
+        return events
+
+    if scenario == "ml-source-burst":
+        # Keep each source below the fixed HTTP-flood volume threshold while
+        # making its request rhythm unusual enough for the source model. The
+        # responses stay successful and the path/user-agent stay ordinary, so
+        # this remains an unknown behavioral pattern rather than a rule hit.
+        start = _window_start(300, now)
+        for source_index, source in enumerate(ips[:16]):
+            for offset in range(95):
+                index = source_index * 95 + offset
+                events.append(_event(
+                    scenario=scenario, index=index,
+                    stamp=start + timedelta(seconds=5 + (offset % 12)),
+                    source_ip=source, path="/", status=200, duration=0.2,
+                    user_agent="Mozilla/5.0 Vanguard-Demo", server_id=server_id,
+                ))
         return events
 
     if scenario == "single-dos":

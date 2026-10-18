@@ -19,6 +19,19 @@ def test_ml_burst_stays_below_per_source_rule_threshold():
     assert len(counts) == 8
 
 
+def test_ml_source_burst_stays_below_rule_threshold_and_uses_many_sources():
+    events = generate_events("ml-source-burst", source_ips=[f"1.1.1.{i}" for i in range(1, 20)], now=NOW)
+    assert len(events) == 16 * 95
+    counts = {}
+    for event in events:
+        counts[event["source_ip"]] = counts.get(event["source_ip"], 0) + 1
+        assert event["status_code"] == 200
+        assert event["path"] == "/"
+    assert set(counts.values()) == {95}
+    assert len(counts) == 16
+
+
+
 def test_single_and_distributed_dos_have_rule_evidence():
     single = generate_events("single-dos", now=NOW)
     distributed = generate_events("distributed-dos", now=NOW)
