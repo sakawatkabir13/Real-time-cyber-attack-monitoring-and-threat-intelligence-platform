@@ -100,6 +100,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
     setEvents([]); setMlEvents([]); setStats(emptyStats); setLiveEvent(null); setUpdatedAt(null); setErrors({});
     setTrafficEvents([]); setLiveTrafficEvent(null);
     const seenTraffic = new Set<string>();
+    const trafficStartedAt = Date.now();
     let trafficInitialized = false;
     const matchesScope = (event: ThreatEvent) => (!serverId || event.server_id === serverId) &&
       (!hours || Date.parse(event.timestamp) >= Date.now() - hours * 3600000);
@@ -108,7 +109,9 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
       for (const event of matching) {
         if (seenTraffic.has(event.id)) continue;
         seenTraffic.add(event.id);
-        if (animate) {
+        // Requests that arrive during initial HTTP/WebSocket setup are live,
+        // even if the first recovery snapshot sees them before the socket does.
+        if (animate || (autoRefresh && Date.parse(event.timestamp) >= trafficStartedAt)) {
           setLiveTrafficEvent(event);
           for (const listener of trafficListeners.current) listener(event);
         }

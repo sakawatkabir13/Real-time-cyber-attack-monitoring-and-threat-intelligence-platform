@@ -25,6 +25,23 @@ afterEach(() => {
 });
 
 describe('live event recovery', () => {
+  it('animates requests received during initial connection setup but not older history', async () => {
+    useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
+    vi.stubGlobal('WebSocket', TestSocket);
+    let finishSnapshot!: (response: Response) => void;
+    const snapshot = new Promise<Response>((resolve) => { finishSnapshot = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/traffic?')
+      ? snapshot : new Response(JSON.stringify([]))));
+    const { result } = renderHook(() => useThreatFeed());
+    const received: string[] = [];
+    result.current.subscribeToTraffic((item) => received.push(item.id));
+    const fresh = { ...event, id: 'http:during-connect', severity: 'normal', timestamp: new Date().toISOString() };
+    await act(async () => { finishSnapshot(new Response(JSON.stringify([fresh, event]))); });
+    expect(received).toEqual(['http:during-connect']);
+    expect(result.current.trafficEvents).toHaveLength(2);
+    act(() => TestSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'HTTP_TRAFFIC', data: [fresh] }) }));
+    expect(received).toEqual(['http:during-connect']);
+  });
   it('delivers every normal and suspicious HTTP request without adding either to detection history', async () => {
     useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
     vi.stubGlobal('WebSocket', TestSocket);
