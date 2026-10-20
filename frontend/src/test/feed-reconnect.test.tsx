@@ -25,20 +25,6 @@ afterEach(() => {
 });
 
 describe('live event recovery', () => {
-  it('keeps the shared map feed live even when the other-feeds preference is off', async () => {
-    useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: false } }));
-    vi.stubGlobal('WebSocket', TestSocket);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([]))));
-    const { result } = renderHook(() => useThreatFeed({ alwaysLive: true }));
-    await act(async () => {});
-    expect(TestSocket.instances).toHaveLength(1);
-    await act(async () => { TestSocket.instances[0].onopen?.(); });
-    expect(result.current.connection).toBe('live');
-    const received: string[] = [];
-    result.current.subscribeToTraffic((item) => received.push(item.id));
-    act(() => TestSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'HTTP_TRAFFIC', data: [event] }) }));
-    expect(received).toEqual(['one']);
-  });
   it('animates requests received during initial connection setup but not older history', async () => {
     useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
     vi.stubGlobal('WebSocket', TestSocket);

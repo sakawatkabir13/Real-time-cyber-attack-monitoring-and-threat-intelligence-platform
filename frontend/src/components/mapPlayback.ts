@@ -1,52 +1,64 @@
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
+export const MAX_ACTIVE_ROUTES = 24;
 export const ROUTE_LIFETIME_MS = 4200;
+// Timestamp-matched demo bursts start together. Different timestamps retain a
+// small stagger so ordinary live traffic does not overwhelm the map.
+const ROUTE_SPACING_MS = 80;
 
-export interface LiveRoute {
-  event: ThreatEvent;
-  startedAt: number;
-  lane: number;
+export interface MapPlayback {
+  active: { event: ThreatEvent; startedAt: number; lane: number }[];
+  pending: ThreatEvent[];
+  lastStartedAt: number;
 }
 
-// Receipt-time rendering, not FIFO playback. Every arrival starts immediately;
-// only its short visual lifetime controls how long it remains on the map.
-export class LiveMapRoutes {
-  readonly active = new Map<string, LiveRoute>();
-  private readonly seen = new Set<string>();
-  private readonly groups = new Map<string, { next: number; count: number }>();
-  private lastExpired = -Infinity;
+export const emptyPlayback: MapPlayback = { active: [], pending: [], lastStartedAt: -Infinity };
 
-  private key(event: ThreatEvent): string {
-    return [event.lng, event.lat, event.dest_lng, event.dest_lat].join(':');
+// FIFO playback never evicts an unplayed event to make room for a new one.
+// Events sharing one timestamp start in the same frame, producing the
+// simultaneous multi-origin fan used by the demonstration. Untimestamped
+// test/legacy records use the ordinary staggered path.
+export function advancePlayback(state: MapPlayback, now: number): MapPlayback {
+  const active = state.active.filter((route) => now - route.startedAt < ROUTE_LIFETIME_MS);
+  if (!state.pending.length || active.length >= MAX_ACTIVE_ROUTES) {
+    return active.length === state.active.length ? state : { ...state, active };
   }
 
-  add(event: ThreatEvent, now: number): boolean {
-    // requestAnimationFrame is suspended in hidden tabs; keep lifetime-based
-    // memory cleanup running on arrivals there too, without replaying old arcs.
-    if (now - this.lastExpired >= 1000) this.expire(now);
-    if (this.seen.has(event.id) || this.active.has(event.id)) return false;
-    this.seen.add(event.id);
-    if (this.seen.size > 15000) this.seen.delete(this.seen.values().next().value!);
-    const key = this.key(event);
-    const group = this.groups.get(key) ?? { next: 0, count: 0 };
-    // Reuse a bounded fan of lanes during large repeat-source bursts. This is
-    // NOT a request limit: unlimited arrivals can share the same visible lane.
-    const index = group.next++ % 9;
-    const lane = index === 0 ? 0 : Math.ceil(index / 2) * (index % 2 ? 1 : -1);
-    group.count += 1;
-    this.groups.set(key, group);
-    this.active.set(event.id, { event, startedAt: now, lane });
-    return true;
+  const first = state.pending[0];
+  const timestamped = typeof first.timestamp === 'string' && first.timestamp.length > 0;
+  const burstInProgress = timestamped && active.some((route) => route.event.timestamp === first.timestamp);
+  if (!burstInProgress && now - state.lastStartedAt < ROUTE_SPACING_MS) {
+    return active.length === state.active.length ? state : { ...state, active };
   }
 
-  expire(now: number): void {
-    this.lastExpired = now;
-    for (const [id, route] of this.active) {
-      if (now - route.startedAt < ROUTE_LIFETIME_MS) continue;
-      this.active.delete(id);
-      const key = this.key(route.event);
-      const group = this.groups.get(key)!;
-      if (--group.count === 0) this.groups.delete(key);
-    }
+  // Take the contiguous timestamp-matched prefix so a synchronized batch is
+  // launched in one state update. Events with missing timestamps remain FIFO.
+  let burstLength = 1;
+  if (timestamped) {
+    while (burstLength < state.pending.length &&
+      state.pending[burstLength].timestamp === first.timestamp) burstLength += 1;
   }
+  const count = Math.min(burstLength, MAX_ACTIVE_ROUTES - active.length);
+  const batch = state.pending.slice(0, count);
+  const pending = state.pending.slice(count);
+  const lanes = Array.from({ length: MAX_ACTIVE_ROUTES * 2 + 1 }, (_, index) =>
+    index === 0 ? 0 : Math.ceil(index / 2) * (index % 2 ? 1 : -1));
+  const startedSoFar: { event: ThreatEvent; lane: number }[] = [];
+  const started = batch.map((event) => {
+    const sameRoute = (other: ThreatEvent) => other.lat === event.lat && other.lng === event.lng &&
+      other.dest_lat === event.dest_lat && other.dest_lng === event.dest_lng;
+    const occupied = new Set(active.filter((route) => sameRoute(route.event)).map((route) => route.lane));
+    const alreadyAssigned = startedLanes(startedSoFar, sameRoute);
+    const lane = lanes.find((candidate) => !occupied.has(candidate) && !alreadyAssigned.has(candidate))!;
+    startedSoFar.push({ event, lane });
+    return { event, startedAt: now, lane };
+  });
+  return { active: [...active, ...started], pending, lastStartedAt: now };
+}
+
+function startedLanes(
+  started: { event: ThreatEvent; lane: number }[],
+  sameRoute: (event: ThreatEvent) => boolean,
+): Set<number> {
+  return new Set(started.filter((route) => sameRoute(route.event)).map((route) => route.lane));
 }

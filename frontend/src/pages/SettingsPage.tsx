@@ -80,10 +80,7 @@ export default function SettingsPage() {
               />
             </div>
             <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="auto-refresh" className="font-mono cursor-pointer">Auto Refresh Other Feeds</Label>
-                <p className="text-xs text-muted-foreground">Dashboard and Threat Map always stay live.</p>
-              </div>
+              <Label htmlFor="auto-refresh" className="font-mono cursor-pointer">Auto Refresh Feeds</Label>
               <Switch
                 id="auto-refresh"
                 checked={settings.autoRefresh}
