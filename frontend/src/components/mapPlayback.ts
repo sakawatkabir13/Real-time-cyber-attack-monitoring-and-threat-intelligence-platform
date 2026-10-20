@@ -1,6 +1,6 @@
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
-export const MAX_ACTIVE_ROUTES = 24;
+export const MAX_ACTIVE_ROUTES = 96;
 export const ROUTE_LIFETIME_MS = 4200;
 // Timestamp-matched demo bursts start together. Different timestamps retain a
 // small stagger so ordinary live traffic does not overwhelm the map.

@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { advancePlayback, emptyPlayback, MAX_ACTIVE_ROUTES } from '@/components/mapPlayback';
+import { advancePlayback, emptyPlayback, MAX_ACTIVE_ROUTES, ROUTE_LIFETIME_MS } from '@/components/mapPlayback';
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
 describe('map playback', () => {
+  it('shows 96 simultaneous arcs and preserves overflow until capacity is available', () => {
+    expect(MAX_ACTIVE_ROUTES).toBe(96);
+    const events = Array.from({ length: 101 }, (_, index) => ({
+      id: String(index), timestamp: '2026-10-21T00:00:00Z',
+      lat: 23.81, lng: 90.41, dest_lat: 39.05, dest_lng: -77.49,
+    } as ThreatEvent));
+    const first = advancePlayback({ ...emptyPlayback, pending: events }, 1000);
+    expect(first.active.map((route) => route.event.id)).toEqual(events.slice(0, 96).map((event) => event.id));
+    expect(first.pending).toEqual(events.slice(96));
+    expect(advancePlayback(first, 1000 + ROUTE_LIFETIME_MS - 1)).toBe(first);
+    const next = advancePlayback(first, 1000 + ROUTE_LIFETIME_MS);
+    expect(next.active.map((route) => route.event.id)).toEqual(events.slice(96).map((event) => event.id));
+    expect(next.pending).toHaveLength(0);
+  });
   it('starts timestamp-matched multi-source bursts in one frame', () => {
     const events = ['bd', 'de', 'us', 'au'].map((id) => ({
       id,
