@@ -67,7 +67,9 @@ const emptyStats: Stats = {
   threatsByHour: [],
 };
 
-export function useThreatFeed({ hours, serverId = '' }: { hours?: number; serverId?: string } = {}) {
+export function useThreatFeed({ hours, serverId = '', alwaysLive = false }: {
+  hours?: number; serverId?: string; alwaysLive?: boolean;
+} = {}) {
   const [events, setEvents] = useState<ThreatEvent[]>([]);
   const [mlEvents, setMlEvents] = useState<ThreatEvent[]>([]);
   const [stats, setStats] = useState<Stats>(emptyStats);
@@ -89,7 +91,8 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   }, []);
   const ws = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<number | null>(null);
-  const autoRefresh = useAppStore((state) => state.settings.autoRefresh);
+  const savedAutoRefresh = useAppStore((state) => state.settings.autoRefresh);
+  const autoRefresh = alwaysLive || savedAutoRefresh;
   const [connection, setConnection] = useState('connecting');
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});

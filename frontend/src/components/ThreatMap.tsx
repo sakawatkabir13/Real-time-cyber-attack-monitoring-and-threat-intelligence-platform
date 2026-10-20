@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Info, MapPin, Pause, Play, Radio, X } from 'lucide-react';
+import { Info, MapPin, Radio, X } from 'lucide-react';
 import { useInvestigation } from '@/components/EventInspector';
 import { useReducedMotion } from 'framer-motion';
-import { ComposableMap, Geographies, Geography, Line, Marker, ZoomableGroup } from 'react-simple-maps';
+import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from 'react-simple-maps';
 import countries from 'world-atlas/countries-110m.json';
 
 import type { MapTarget, SubscribeToDetections, ThreatEvent } from '@/hooks/useThreatFeed';
-import { advancePlayback, emptyPlayback } from './mapPlayback';
-import { useAppStore } from '@/store/appStore';
+import LiveTrafficLayer from './LiveTrafficLayer';
+import { point, severityColors, sourcePoint, targetPoint } from './mapGeometry';
+import type { GeoPoint } from './mapGeometry';
 import './ThreatMap.css';
 
 interface ThreatMapProps {
@@ -23,67 +24,13 @@ interface ThreatMapProps {
   showRecentDetections?: boolean;
 }
 
-type GeoPoint = [number, number];
-
 interface SelectedEvent {
   event: ThreatEvent;
   pinned: boolean;
 }
 
-const severityColors: Record<string, string> = {
-  normal: '#94a3b8',
-  low: '#67e8f9',
-  medium: '#fbbf24',
-  high: '#fb923c',
-  critical: '#fb4b62',
-};
-
-function point(lng: number | null | undefined, lat: number | null | undefined): GeoPoint | null {
-  if (typeof lng !== 'number' || typeof lat !== 'number' ||
-      !Number.isFinite(lng) || !Number.isFinite(lat) ||
-      Math.abs(lng) > 180 || Math.abs(lat) > 90) return null;
-  return [lng, lat];
-}
-
-function sourcePoint(event: ThreatEvent): GeoPoint | null {
-  return point(event.lng, event.lat);
-}
-
-function targetPoint(event: ThreatEvent, fallback: GeoPoint | null = null): GeoPoint | null {
-  return point(event.dest_lng, event.dest_lat) ?? fallback;
-}
-
 function isAggregateEvent(event: ThreatEvent): boolean {
   return event.source_ip === 'Multiple sources' || event.attack_type === 'server_traffic_anomaly';
-}
-
-export function routeCoordinates(from: GeoPoint, to: GeoPoint, lane = 0): GeoPoint[] {
-  // A controlled bowed arc is more stable for a dashboard than a great-circle
-  // interpolation: great circles can pass over a pole or cross ±180° and make
-  // SVG paths appear to reverse direction at the top of the map.
-  // Keep longitude continuous in the SVG coordinate space. Wrapping each
-  // sample independently at ±180° is what creates the visible backward jump.
-  const deltaLng = to[0] - from[0];
-  const deltaLat = to[1] - from[1];
-  const distance = Math.hypot(deltaLng, deltaLat);
-  const headroom = Math.max(1, 82 - Math.max(Math.abs(from[1]), Math.abs(to[1])));
-  const bow = Math.min(headroom, Math.max(3, Math.min(14, distance * 0.07)));
-  const length = Math.max(1, distance);
-  const perpendicular: GeoPoint = [-deltaLat / length, deltaLng / length];
-
-  return Array.from({ length: 49 }, (_, index) => {
-    const t = index / 48;
-    if (index === 0) return from;
-    if (index === 48) return to;
-    const arc = Math.sin(Math.PI * t);
-    const baseLng = from[0] + deltaLng * t;
-    const baseLat = from[1] + deltaLat * t + bow * arc;
-    const laneOffset = lane * 2.4 * arc;
-    return [
-      Math.max(-180, Math.min(180, baseLng + perpendicular[0] * laneOffset)),
-      Math.max(-82, Math.min(82, baseLat + perpendicular[1] * laneOffset)),
-    ] as GeoPoint;
-  });
 }
 
 function detectionName(value: string): string {
@@ -104,13 +51,9 @@ export default function ThreatMap({
   showRecentDetections = true,
 }: ThreatMapProps) {
   const { inspectEvent } = useInvestigation();
-  const [playback, setPlayback] = useState(emptyPlayback);
+  const [activeCount, setActiveCount] = useState(0);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
-  const [paused, setPaused] = useState(false);
-  const seenIds = useRef(new Set<string>());
   const reducedMotion = useReducedMotion();
-  const autoRefresh = useAppStore((state) => state.settings.autoRefresh);
-  const animationsEnabled = !paused && !reducedMotion;
   const configuredTarget = useMemo(
     () => point(mapTarget?.lng, mapTarget?.lat),
     [mapTarget?.lat, mapTarget?.lng],
@@ -163,45 +106,6 @@ export default function ThreatMap({
     return [...byServer.values()];
   }, [configuredTarget, events, liveEvent, mapTarget]);
 
-  const enqueueDetection = useCallback((event: ThreatEvent) => {
-    if (seenIds.current.has(event.id)) return;
-    seenIds.current.add(event.id);
-    // Bound the replay guard, not the playback queue. Pending IDs are also checked below.
-    if (seenIds.current.size > 5000) seenIds.current.delete(seenIds.current.values().next().value!);
-    if (reducedMotion || !sourcePoint(event) || !targetPoint(event, configuredTarget)) return;
-    setPlayback((current) => {
-      if (current.pending.some((item) => item.id === event.id) ||
-          current.active.some((route) => route.event.id === event.id)) return current;
-      return { ...current, pending: [...current.pending, event] };
-    });
-  }, [configuredTarget, reducedMotion]);
-
-  useEffect(() => subscribeToTraffic?.(enqueueDetection), [subscribeToTraffic, enqueueDetection]);
-
-  useEffect(() => {
-    if (!subscribeToTraffic && liveEvent) enqueueDetection(liveEvent);
-  }, [liveEvent, subscribeToTraffic, enqueueDetection]);
-
-  useEffect(() => {
-    if (!animationsEnabled) return;
-    const startedAt = Date.now();
-    setPlayback((current) => advancePlayback(current, startedAt));
-    const timer = window.setInterval(() => {
-      const now = Date.now();
-      setPlayback((current) => advancePlayback(current, now));
-    }, 50);
-    return () => window.clearInterval(timer);
-  }, [animationsEnabled, playback.pending.length]);
-
-  const togglePaused = () => {
-    if (!paused) {
-      // Restart any interrupted route on resume, rather than losing it while hidden.
-      setPlayback((current) => ({ ...emptyPlayback,
-        pending: [...current.active.map((route) => route.event), ...current.pending] }));
-    }
-    setPaused((current) => !current);
-  };
-
   const showDetails = (event: ThreatEvent, pinned: boolean) => setSelected({ event, pinned });
   const hideUnpinned = () => setSelected((current) => current?.pinned ? current : null);
   const onMarkerKeyDown = (keyEvent: KeyboardEvent<SVGCircleElement>, event: ThreatEvent) => {
@@ -224,7 +128,7 @@ export default function ThreatMap({
             <p className="text-[10px] text-slate-400">All requests · detection-only source dots · illustrative routes</p>
           </div>
           <span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
-            {autoRefresh ? 'AUTO REFRESH ON' : 'AUTO REFRESH OFF'}
+            LIVE · NO PLAYBACK QUEUE
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -236,25 +140,13 @@ export default function ThreatMap({
               </span>
             ))}
           </div>
-          <button
-            type="button"
-            aria-label={paused ? 'Resume map animations' : 'Pause map animations'}
-            aria-pressed={paused}
-            disabled={Boolean(reducedMotion)}
-            title={reducedMotion ? 'Animations disabled by system reduced-motion preference' : undefined}
-            onClick={togglePaused}
-            className="inline-flex items-center gap-1 rounded border border-[#31505a] px-2 py-1 text-[10px] text-slate-200 transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-            {reducedMotion ? 'Reduced motion' : paused ? 'Resume animation' : 'Pause animation'}
-          </button>
         </div>
         </div>
 
         <div className="vanguard-map-surface relative min-h-[230px] flex-1">
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-cyan-300/20 bg-[#071218]/90 px-2 py-1 text-[10px] text-cyan-100">
-          {playback.active.length} animating · {playback.pending.length} queued
-          {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — requests retained' : 'Queued playback — not real-time packet timing'}</span>}
+          {reducedMotion ? 'System reduced-motion preference enabled' : `${activeCount} live arcs · immediate display`}
+          <span className="block text-slate-400">Updates on receipt of access logs · not packet-level timing</span>
           {trafficEvents.some((event) => !sourcePoint(event) || !targetPoint(event, configuredTarget)) &&
             <span className="block text-slate-400">Some requests cannot be geolocated; no coordinates are invented.</span>}
         </div>
@@ -297,32 +189,9 @@ export default function ThreatMap({
               );
             })}
 
-            {animationsEnabled && playback.active.map(({ event, lane }, index) => {
-              const from = sourcePoint(event);
-              const to = targetPoint(event, configuredTarget);
-              if (!from || !to) return null;
-              const coordinates = routeCoordinates(from, to, lane);
-              const color = severityColors[event.severity] || severityColors.low;
-              return (
-                <g key={'route-' + event.id} data-event-id={event.id} data-lane={lane} pointerEvents="none">
-                  <Line data-testid="threat-arc" from={from} to={to} coordinates={coordinates}
-                    pathLength={1} stroke={color} strokeWidth={1.15}
-                    className="vanguard-route-path" />
-                  <Line data-testid="route-tracer" from={from} to={to} coordinates={coordinates}
-                    pathLength={1} stroke={color} strokeWidth={3.4}
-                    className="vanguard-route-tracer" style={{ color }} />
-                  {event.severity !== 'normal' && <Marker coordinates={from}>
-                    <circle r={4} fill="none" stroke={color} strokeWidth={1}
-                      className="vanguard-source-flash" />
-                    <text x={7} y={10 + (index % 4) * 10} fill={color} fontSize={8}>#{event.kind === 'http_request' ? event.id.slice(-6) : event.id}</text>
-                  </Marker>}
-                  <Marker coordinates={to}>
-                    <circle r={5} fill="none" stroke={color} strokeWidth={1.3}
-                      className="vanguard-target-pulse" />
-                  </Marker>
-                </g>
-              );
-            })}
+            <LiveTrafficLayer liveEvent={liveEvent} subscribeToTraffic={subscribeToTraffic}
+              configuredTarget={configuredTarget} reducedMotion={Boolean(reducedMotion)}
+              onActiveCount={setActiveCount} />
 
             {targets.map((target) => (
               <Marker key={target.serverId} coordinates={target.coordinates}>

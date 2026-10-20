@@ -59,13 +59,13 @@ describe('Dashboard and Threat Map parity', () => {
   it('uses the same default scope and updates both map inputs when either page changes filters', async () => {
     render(<><Dashboard /><MapPage /></>);
     assertSameMaps();
-    expect(feed).toHaveBeenCalledWith({ hours: 24, serverId: '' });
+    expect(feed).toHaveBeenCalledWith({ hours: 24, serverId: '', alwaysLive: true });
     await waitFor(() => expect(screen.getAllByRole('option', { name: 'spandan-web' })).toHaveLength(2));
     fireEvent.change(screen.getAllByRole('combobox', { name: 'Detection period' })[0], { target: { value: '168' } });
     expect(screen.getAllByRole('combobox', { name: 'Detection period' }).every((select) => (select as HTMLSelectElement).value === '168')).toBe(true);
     fireEvent.change(screen.getAllByRole('combobox', { name: 'Detection server' })[1], { target: { value: 'spandan-web' } });
     expect(feed.mock.calls.slice(-2).map(([scope]) => scope)).toEqual([
-      { hours: 168, serverId: 'spandan-web' }, { hours: 168, serverId: 'spandan-web' },
+      { hours: 168, serverId: 'spandan-web', alwaysLive: true }, { hours: 168, serverId: 'spandan-web', alwaysLive: true },
     ]);
     assertSameMaps();
   });
@@ -83,7 +83,7 @@ describe('Dashboard and Threat Map parity', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: 'other-web' })).toBeInTheDocument());
     expect(screen.getByRole('combobox', { name: 'Detection period' })).toHaveValue('1');
     expect(screen.getByRole('combobox', { name: 'Detection server' })).toHaveValue('spandan-web');
-    expect(feed).toHaveBeenLastCalledWith({ hours: 1, serverId: 'spandan-web' });
+    expect(feed).toHaveBeenLastCalledWith({ hours: 1, serverId: 'spandan-web', alwaysLive: true });
   });
 
   it('synchronizes filter choices changed in another browser tab', async () => {
