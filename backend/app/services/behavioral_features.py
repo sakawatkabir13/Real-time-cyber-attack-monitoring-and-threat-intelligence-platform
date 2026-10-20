@@ -10,6 +10,7 @@ from app.config import settings
 from app.redis_client import redis_client
 from app.services.ml_features import temporal_features
 from app.services.privacy import hash_ip
+from app.services.scanner_detection import scanner_indicator
 
 
 PENDING_WINDOWS = "ml:pending-windows:v3"
@@ -19,7 +20,8 @@ AUTH_PATH_RE = re.compile(r"/(?:api/)?(?:login|signin|auth|token|session)|/user/
 # Atomic updates prevent partial snapshots and duplicate aggregation on retries.
 # Track at most 128 paths individually; HLL still counts overall path diversity.
 OBSERVE_FIELDS = ("event_id", "now", "due_at", "bytes_sent", "status_family", "request_time",
-                  "rule_threat", "auth_failure", "ip_hash", "path_hash", "path", "ua_hash", "seen_key", "second", "next_base", "grace")
+                  "rule_threat", "auth_failure", "ip_hash", "path_hash", "path", "ua_hash", "seen_key", "second", "next_base", "grace",
+                  "scanner", "baseline_excluded")
 METADATA_FIELDS = ("scope", "server_id", "entity_key", "source_ip_hash", "source_ip", "window_start",
                    "window_seconds", "feature_schema", "reputation_score", "reporter_count", "community_reports")
 OBSERVE_SCRIPT = "local b, p = KEYS[1], {metadata={}}\n" + "\n".join(
@@ -40,6 +42,8 @@ if p.request_time ~= '' then
     redis.call('HINCRBY', b, 'timed_request_count', 1)
 end
 if p.rule_threat == '1' then redis.call('HINCRBY', b, 'rule_threat_count', 1) end
+if p.scanner == '1' then redis.call('HINCRBY', b, 'scanner_request_count', 1) end
+if p.baseline_excluded == '1' then redis.call('HINCRBY', b, 'baseline_excluded_count', 1) end
 if p.auth_failure == '1' then redis.call('HINCRBY', b, 'failed_auth_count', 1) end
 if p.metadata.scope == 'server' then
     if redis.call('SET', p.seen_key, '1', 'EX', 2592000, 'NX') then
@@ -180,6 +184,10 @@ class BehavioralFeatureService:
         server_hash = hash_ip(f"v3:server:{log.server_id}")
         ip_hash = hash_ip(log.source_ip)
         path = (urlsplit(log.path or "/").path or "/")[:512]
+        scanner = scanner_indicator(log.path, log.user_agent)
+        baseline_excluded = rule_threat or scanner or (
+            bool(AUTH_PATH_RE.search(path)) and log.status_code == 429
+        )
         now = time.time()
         event_id = log.event_id or uuid.uuid4().hex
         pipe = client.pipeline()
@@ -210,6 +218,7 @@ class BehavioralFeatureService:
                 "second": int(timestamp.timestamp()) - start,
                 "next_base": _base_key(scope, server_hash, entity_key, start + seconds),
                 "grace": settings.ML_WINDOW_GRACE_SECONDS,
+                "scanner": scanner, "baseline_excluded": baseline_excluded,
             }
             values = [payload[field] for field in OBSERVE_FIELDS] + [payload["metadata"][field] for field in METADATA_FIELDS]
             arguments = ["" if value is None else int(value) if isinstance(value, bool) else value for value in values]

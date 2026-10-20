@@ -28,6 +28,7 @@ from app.schemas.event import ThreatEventCreate
 from app.services.behavioral_features import AUTH_PATH_RE, behavioral_features
 from app.redis_client import redis_client
 from app.services.log_parser import parse_timestamp
+from app.services.scanner_detection import SCANNER_UA_RE, SCANNER_PATH_RE
 
 logger = logging.getLogger(__name__)
 
@@ -64,23 +65,10 @@ _TRAVERSAL_RE = re.compile(
 )
 
 # Scanner / Recon tool user-agents — common pentest and automated scanners
-_SCANNER_UA_RE = re.compile(
-    r"(sqlmap|nikto|nmap|masscan|metasploit|nessus|openvas|"
-    r"w3af|acunetix|ibm\s*appscan|dirbuster|gobuster|ffuf|"
-    r"wfuzz|nuclei|whatweb|shodan|zgrab|censys|feroxbuster)",
-    re.IGNORECASE,
-)
+_SCANNER_UA_RE = SCANNER_UA_RE
 
 # Scanner / Recon target paths — sensitive files commonly probed by scanners
-_SCANNER_PATH_RE = re.compile(
-    r"(\.env$|\.git/config|\.htaccess|\.htpasswd|web\.config|"
-    r"phpinfo\.php|php-info\.php|info\.php|"
-    r"wp-admin|wp-login\.php|wp-config\.php|xmlrpc\.php|"
-    r"phpmyadmin|/pma/|/admin/|/manager/html|"
-    r"/shell\.|/cmd\.|/backdoor\.|/c99\.|/r57\.|"
-    r"\.(bak|old|backup|sql|dump|tar\.gz|zip)(?:\?|$))",
-    re.IGNORECASE,
-)
+_SCANNER_PATH_RE = SCANNER_PATH_RE
 
 # Brute Force target paths — authentication endpoints
 _BRUTE_PATH_RE = AUTH_PATH_RE
@@ -112,6 +100,7 @@ class DetectionEngine:
                 "timed": log.request_time is not None,
                 "slow": log.request_time is not None and log.request_time >= profile.slow_request_seconds,
                 "auth": auth, "failed_auth": auth and log.status_code in (401, 403),
+                "limited_auth": auth and log.status_code == 429,
             },
         )
         counts["same_path"] = counts[f"path:{path}"]
@@ -160,6 +149,7 @@ class DetectionEngine:
         counts: dict[str, int] | None = None,
     ) -> ThreatEventCreate | None:
         path = log.path or ""
+        probe_path = urlsplit(path).path
         ua = log.user_agent or ""
         status = log.status_code or 0
         counts = counts or {}
@@ -203,11 +193,13 @@ class DetectionEngine:
 
         # Brute Force — repeated auth failures from same IP
         is_auth_path = bool(_BRUTE_PATH_RE.search(path))
-        is_auth_failure = status in (401, 403)
+        is_auth_failure = status in (401, 403, 429)
         failed_auth_attempts = counts.get("failed_auth", 0)
-        failed_ratio = failed_auth_attempts / max(1, counts.get("auth", 0))
+        limited_auth_attempts = counts.get("limited_auth", 0)
+        rejected_auth_attempts = failed_auth_attempts + limited_auth_attempts
+        failed_ratio = rejected_auth_attempts / max(1, counts.get("auth", 0))
         if (is_auth_path and is_auth_failure
-                and failed_auth_attempts > profile.failed_auth_threshold
+                and rejected_auth_attempts >= profile.failed_auth_threshold
                 and failed_ratio >= profile.failed_auth_ratio):
             return self._make_event(
                 log, dt,
@@ -215,10 +207,11 @@ class DetectionEngine:
                 severity="high",
                 anomaly_score=82.0,
                 explanation=(
-                    f"Possible brute force: {failed_auth_attempts} authentication failures "
+                    f"Possible brute force: {failed_auth_attempts} authentication failures and "
+                    f"{limited_auth_attempts} rate-limited authentication requests "
                     f"({failed_ratio:.0%} of authentication requests) in five minutes of "
                     f"request time. Latest endpoint {path}, HTTP {status}. Investigate; "
-                    "this does not establish account compromise."
+                    "HTTP 429 indicates throttling, not an invalid password or account compromise."
                 ),
             )
 
@@ -242,7 +235,7 @@ class DetectionEngine:
             )
 
         # Scanner / Recon — known tool user-agents or sensitive path probing
-        if _SCANNER_UA_RE.search(ua) or _SCANNER_PATH_RE.search(path):
+        if _SCANNER_UA_RE.search(ua) or _SCANNER_PATH_RE.search(probe_path):
             return self._make_event(
                 log, dt,
                 attack_type="scanner",
@@ -251,7 +244,7 @@ class DetectionEngine:
                 explanation=(
                     f"Reconnaissance indicator (not proof of exploitation). "
                     + (f"User-agent: {ua[:80]}. " if _SCANNER_UA_RE.search(ua) else "")
-                    + (f"Probed path: {path[:80]}." if _SCANNER_PATH_RE.search(path) else "")
+                    + (f"Probed path: {probe_path[:80]}." if _SCANNER_PATH_RE.search(probe_path) else "")
                 ),
             )
 

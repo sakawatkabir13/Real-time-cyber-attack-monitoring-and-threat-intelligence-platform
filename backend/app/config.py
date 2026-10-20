@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     ANALYSIS_UPLOAD_DIR: str = "/var/lib/vanguard/uploads"
     MAX_INGEST_BATCH_SIZE: int = Field(default=250, ge=1, le=5000)
     MAX_WEBSOCKET_CONNECTIONS: int = Field(default=200, ge=1, le=10_000)
+    MAP_TRAFFIC_LIMIT: int = Field(default=5000, ge=500, le=50_000)
     EVENT_RETENTION_DAYS: int = Field(default=30, ge=1, le=3650)
     ALERT_DEDUPE_SECONDS: int = Field(default=900, ge=60, le=86_400)
     COLLECTOR_OFFLINE_SECONDS: int = Field(default=45, ge=15, le=3600)

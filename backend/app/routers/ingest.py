@@ -14,6 +14,7 @@ from app.security import verify_collector_token
 from app.services.log_parser import parse_event
 from app.services.detection_engine import detection_engine
 from app.services.event_pipeline import PendingThreat, persist_threats
+from app.services.http_traffic import HttpObservation, publish_http_requests
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,6 +36,7 @@ async def ingest_batch(batch: AgentBatch, authorization: str | None = Header(Non
     claimed: list[str] = []
     completed: list[str] = []
     threats: list[PendingThreat] = []
+    traffic: list[HttpObservation] = []
     seen_event_ids: set[str] = set()
 
     try:
@@ -71,6 +73,7 @@ async def ingest_batch(batch: AgentBatch, authorization: str | None = Header(Non
                 continue
 
             detected = await detection_engine.process_log(log_entry)
+            traffic.append(HttpObservation(log_entry, detected))
             if detected is not None:
                 threats.append(PendingThreat(detected, event_id))
             accepted += 1
@@ -79,6 +82,7 @@ async def ingest_batch(batch: AgentBatch, authorization: str | None = Header(Non
 
         async with AsyncSessionLocal() as db:
             await persist_threats(db, threats)
+        await publish_http_requests(traffic)
 
         for event_id in completed:
             await redis_client.complete_ingest_event(batch.server_id, event_id)

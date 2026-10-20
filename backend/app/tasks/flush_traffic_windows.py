@@ -18,6 +18,7 @@ from app.services.behavioral_features import (
     SNAPSHOT_SCRIPT, decode_snapshot, previous_key, values_from_snapshot,
 )
 from app.services.scanner_detection import is_directory_enumeration
+from app.services.training_data import snapshot_training_eligible
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -99,8 +100,9 @@ def flush_traffic_windows_task() -> int:
                 "reporter_count": int(values["reporter_count"]),
                 "community_reports": int(values["community_reports"]),
                 "rule_threat_count": rule_threat_count,
-                "is_training_eligible": rule_threat_count == 0 and not enumeration
-                and (anomaly_score is None or anomaly_score < settings.ML_ALERT_SCORE),
+                "is_training_eligible": snapshot_training_eligible(
+                    data, enumeration=enumeration, anomaly_score=anomaly_score,
+                ),
                 "anomaly_score": anomaly_score,
                 "model_version": data.get("model_version") or None,
                 "anomaly_explanation": data.get("anomaly_explanation") or None,
@@ -126,6 +128,11 @@ def flush_traffic_windows_task() -> int:
                     for column in table.columns
                     if column.name not in {"id", "created_at"}
                 }
+                # Quarantine is monotonic: a stale concurrent snapshot or late
+                # benign request must not re-enable an explicitly excluded row.
+                update_values["is_training_eligible"] = (
+                    table.c.is_training_eligible & statement.excluded.is_training_eligible
+                )
                 session.execute(
                     statement.on_conflict_do_update(
                         constraint="uq_traffic_window_entity_period",

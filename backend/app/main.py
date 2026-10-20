@@ -298,6 +298,16 @@ async def get_events(
     return [serialize_event(event) for event in result.scalars()]
 
 
+@app.get("/api/traffic", dependencies=[Depends(require_dashboard_auth)])
+async def get_http_traffic(
+    limit: int = Query(default=500, ge=1, le=5000),
+    hours: int = Query(default=24, ge=1, le=168),
+    server_id: str | None = Query(default=None, max_length=64),
+):
+    from app.services.http_traffic import recent_http_requests
+    return await recent_http_requests(limit=limit, hours=hours, server_id=server_id)
+
+
 @app.get("/api/map-config", dependencies=[Depends(require_dashboard_auth)])
 async def get_map_config(server_id: str | None = Query(default=None, max_length=64)):
     """Return the configured destination used by the live threat maps.

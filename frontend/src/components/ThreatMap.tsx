@@ -13,8 +13,10 @@ import './ThreatMap.css';
 
 interface ThreatMapProps {
   events: ThreatEvent[];
+  /** Short-lived HTTP telemetry; never used for detection markers or counters. */
+  trafficEvents?: ThreatEvent[];
   liveEvent: ThreatEvent | null;
-  subscribeToDetections?: SubscribeToDetections;
+  subscribeToTraffic?: SubscribeToDetections;
   mapTarget?: MapTarget | null;
   mapTargetLoading?: boolean;
   /** Show the separate recent-detections panel (used on the dedicated map page). */
@@ -29,6 +31,7 @@ interface SelectedEvent {
 }
 
 const severityColors: Record<string, string> = {
+  normal: '#94a3b8',
   low: '#67e8f9',
   medium: '#fbbf24',
   high: '#fb923c',
@@ -93,8 +96,9 @@ function eventTime(value: string): string {
 
 export default function ThreatMap({
   events,
+  trafficEvents = [],
   liveEvent,
-  subscribeToDetections,
+  subscribeToTraffic,
   mapTarget = null,
   mapTargetLoading = false,
   showRecentDetections = true,
@@ -172,11 +176,11 @@ export default function ThreatMap({
     });
   }, [configuredTarget, reducedMotion]);
 
-  useEffect(() => subscribeToDetections?.(enqueueDetection), [subscribeToDetections, enqueueDetection]);
+  useEffect(() => subscribeToTraffic?.(enqueueDetection), [subscribeToTraffic, enqueueDetection]);
 
   useEffect(() => {
-    if (!subscribeToDetections && liveEvent) enqueueDetection(liveEvent);
-  }, [liveEvent, subscribeToDetections, enqueueDetection]);
+    if (!subscribeToTraffic && liveEvent) enqueueDetection(liveEvent);
+  }, [liveEvent, subscribeToTraffic, enqueueDetection]);
 
   useEffect(() => {
     if (!animationsEnabled) return;
@@ -216,16 +220,16 @@ export default function ThreatMap({
         <div className="flex items-center gap-3">
           <Radio className="h-4 w-4 text-cyan-300" aria-hidden="true" />
           <div>
-            <h2 className="text-xs font-bold tracking-[0.18em] text-slate-100">LIVE DETECTION MAP</h2>
-            <p className="text-[10px] text-slate-400">HTTP detections · approximate locations · illustrative routes</p>
+            <h2 className="text-xs font-bold tracking-[0.18em] text-slate-100">LIVE HTTP TRAFFIC MAP</h2>
+            <p className="text-[10px] text-slate-400">All requests · detection-only source dots · illustrative routes</p>
           </div>
           <span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
             {autoRefresh ? 'AUTO REFRESH ON' : 'AUTO REFRESH OFF'}
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <div className="hidden items-center gap-2 text-[10px] text-slate-300 sm:flex" aria-label="Detection severity legend">
-            {(['low', 'medium', 'high', 'critical'] as const).map((severity) => (
+          <div className="hidden items-center gap-2 text-[10px] text-slate-300 sm:flex" aria-label="Request behavior legend">
+            {(['normal', 'low', 'medium', 'high', 'critical'] as const).map((severity) => (
               <span key={severity} className="flex items-center gap-1 capitalize">
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: severityColors[severity] }} />
                 {severity}
@@ -250,9 +254,9 @@ export default function ThreatMap({
         <div className="vanguard-map-surface relative min-h-[230px] flex-1">
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-cyan-300/20 bg-[#071218]/90 px-2 py-1 text-[10px] text-cyan-100">
           {playback.active.length} animating · {playback.pending.length} queued
-          {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — detections retained' : 'Queued playback — not real-time packet timing'}</span>}
-          {events.some((event) => !isAggregateEvent(event) && (!sourcePoint(event) || !targetPoint(event, configuredTarget))) &&
-            <span className="block text-amber-200">Some detections lack location data; {showRecentDetections ? 'see cards below' : 'inspect the feeds below'}</span>}
+          {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — requests retained' : 'Queued playback — not real-time packet timing'}</span>}
+          {trafficEvents.some((event) => !sourcePoint(event) || !targetPoint(event, configuredTarget)) &&
+            <span className="block text-slate-400">Some requests cannot be geolocated; no coordinates are invented.</span>}
         </div>
           <ComposableMap width={1400} height={620} projection="geoEqualEarth"
           projectionConfig={{ scale: 190 }} className="h-full w-full">
@@ -307,11 +311,11 @@ export default function ThreatMap({
                   <Line data-testid="route-tracer" from={from} to={to} coordinates={coordinates}
                     pathLength={1} stroke={color} strokeWidth={3.4}
                     className="vanguard-route-tracer" style={{ color }} />
-                  <Marker coordinates={from}>
+                  {event.severity !== 'normal' && <Marker coordinates={from}>
                     <circle r={4} fill="none" stroke={color} strokeWidth={1}
                       className="vanguard-source-flash" />
-                    <text x={7} y={10 + (index % 4) * 10} fill={color} fontSize={8}>#{event.id}</text>
-                  </Marker>
+                    <text x={7} y={10 + (index % 4) * 10} fill={color} fontSize={8}>#{event.kind === 'http_request' ? event.id.slice(-6) : event.id}</text>
+                  </Marker>}
                   <Marker coordinates={to}>
                     <circle r={5} fill="none" stroke={color} strokeWidth={1.3}
                       className="vanguard-target-pulse" />

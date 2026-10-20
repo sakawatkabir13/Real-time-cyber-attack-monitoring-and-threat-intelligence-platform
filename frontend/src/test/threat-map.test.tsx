@@ -21,7 +21,7 @@ vi.mock('react-simple-maps', () => ({
     <g data-coordinates={coordinates.join(',')}>{children}</g>,
   Line: ({ from, to, coordinates, ...props }: {
     from: number[]; to: number[]; coordinates: number[][]; 'data-testid': string;
-  }) => <path data-testid={props['data-testid']} data-from={from.join(',')}
+  }) => <path stroke={(props as { stroke?: string }).stroke} data-testid={props['data-testid']} data-from={from.join(',')}
     data-to={to.join(',')} data-samples={coordinates.length} />,
 }));
 
@@ -51,6 +51,23 @@ beforeEach(() => { reducedMotion.mockReturnValue(false); vi.useFakeTimers(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('ThreatMap precision routes', () => {
+  it('animates normal HTTP requests neutrally without adding source markers, cards or detection counts', () => {
+    const normal = { ...event('normal', 23.81, 90.41), kind: 'http_request' as const,
+      attack_type: 'http_request', severity: 'normal' };
+    const view = render(<ThreatMap events={[]} trafficEvents={[normal]} liveEvent={normal} />);
+    expect(screen.getByTestId('threat-arc')).toHaveAttribute('stroke', '#94a3b8');
+    expect(screen.queryByRole('button', { name: /Inspect .* from normal/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('×1')).not.toBeInTheDocument();
+    expect(screen.getByText(/RECENT DETECTIONS · 0 SOURCES/)).toBeInTheDocument();
+    expect(screen.getByText('No detections recorded yet')).toBeInTheDocument();
+    const scanner = event('scanner', 52.52, 13.405);
+    view.rerender(<ThreatMap events={[scanner]} trafficEvents={[normal, scanner]} liveEvent={scanner} />);
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getAllByTestId('threat-arc').map((arc) => arc.getAttribute('stroke')))
+      .toEqual(['#94a3b8', '#fbbf24']);
+    expect(screen.getAllByRole('button', { name: /Inspect .* from/ })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Inspect scanner from scanner' })).toBeInTheDocument();
+  });
   it('frames the full world so long northern arcs cannot leave the default viewport', () => {
     render(<ThreatMap events={[]} liveEvent={null} />);
     const map = screen.getByTestId('map-projection');
@@ -272,7 +289,7 @@ describe('ThreatMap precision routes', () => {
     const burst = Array.from({ length: 25 }, (_, index) => ({
       ...event(String(index), 23.81, 90.41), source_ip: '103.1.2.3',
     }));
-    render(<ThreatMap events={burst} liveEvent={null} subscribeToDetections={subscribe} />);
+    render(<ThreatMap events={burst} liveEvent={null} subscribeToTraffic={subscribe} />);
     act(() => { for (const detection of burst) deliver?.(detection); deliver?.(burst[0]); });
     const animated = new Set<string>();
     for (let step = 0; step < 100; step += 1) {

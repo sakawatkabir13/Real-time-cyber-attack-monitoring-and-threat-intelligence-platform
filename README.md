@@ -60,7 +60,7 @@ Most teams running their own infrastructure have **no real-time visibility** int
 - 🛰️ **Real-time log monitoring** — ship structured access-log events from one or more authorized servers through a lightweight collector.
 - 🧠 **Hybrid detection** — combine explainable HTTP rules with behavioral anomaly scoring for known signatures and unusual traffic patterns.
 - 📊 **Behavioral analytics** — build event-time traffic windows from real observations and score completed server/source activity when models are ready.
-- 🌍 **Live threat visualization** — inspect approximate source locations, illustrative routes to the monitored destination, severity, request context, and detection evidence.
+- 🌍 **Live HTTP visualization** — animate every observed request, using neutral routes for ordinary traffic and severity colors for detections. Persistent source markers and counts remain detection-only.
 - 🚨 **Alert lifecycle management** — deduplicate repeated findings, acknowledge alerts, record investigation outcomes, and review related activity.
 - 🔁 **Reliable ingestion** — use authenticated batches, stable event identifiers, retry-safe delivery, and out-of-order event handling.
 - 🧰 **Operational controls** — monitor collector heartbeats, view pipeline health, pause or resume authorized collectors, and apply retention cleanup.
@@ -126,6 +126,7 @@ All endpoints are served under `/api`, behind the bundled Nginx.
 | `GET` | `/api/collectors` | Session | List all known collector agents and their status |
 | `POST` | `/api/collectors/{server_id}/command` | Session | Pause or resume a collector remotely |
 | `GET` | `/api/events` | Session | Recent threat events |
+| `GET` | `/api/traffic` | Session | Bounded recent HTTP map telemetry; normal requests are not threat records |
 | `GET` | `/api/stats` | Session | Aggregate dashboard statistics (cached) |
 | `GET` | `/api/alerts` | Session | List deduplicated alerts, filterable by status |
 | `PATCH` | `/api/alerts/{alert_id}/acknowledge` | Session | Acknowledge an alert |
@@ -375,6 +376,10 @@ Every ingested event is evaluated in order:
 3. **Behavioural aggregation** — summarize real server/source traffic windows; an independent scheduled worker scores completed windows, even if a source stops sending requests. Compatible IsolationForest models engage only after enough eligible data accumulates (`ML_MIN_TRAINING_WINDOWS`).
 
 Detected suspicious events are persisted, not every normal request. Traffic summaries retain normal activity for training. A finding is not proof of an attack: human investigation records the outcome. High/critical events and ML findings create deduplicated alerts.
+
+The map receives all valid ingested HTTP requests through a separate WebSocket feed. Normal requests produce transient neutral arcs, not persistent source dots, detection counts, or alerts. Redis retains up to `MAP_TRAFFIC_LIMIT` recent requests (default 5,000, at most seven days) for reconnect recovery; it is not a complete access-log archive. Requests without reliable source or destination coordinates cannot be drawn. Heavy bursts are queued for animation rather than silently sampled. Query strings and request bodies are not included in normal map telemetry.
+
+Known scanner indicators, including ffuf's `Fuzz Faster U Fool` user-agent, exclude both source and server windows from baseline training regardless of their ML score. Rate-limited login requests also exclude their windows; repeated authentication rejections can trigger a possible brute-force finding. HTTP 429 means throttling, not proof that a password was invalid or an account was compromised.
 
 Accuracy metrics still require a real labeled holdout. Detailed detection, operations, and evaluation guides are maintained privately.
 

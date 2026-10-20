@@ -5,14 +5,14 @@ import FeedStatus from '@/components/FeedStatus';
 import DetectionFilters from '@/components/DetectionFilters';
 
 export default function MapPage() {
-  const { hours, serverId, events, mapTarget, mapTargetLoading, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useDetectionViewFeed();
+  const { hours, serverId, events, mapTarget, mapTargetLoading, trafficEvents, liveTrafficEvent, subscribeToTraffic, connection, updatedAt, error, refresh } = useDetectionViewFeed();
 
   return (
     <div className="p-6 space-y-4 h-full flex flex-col">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold font-display text-foreground">Global Threat Map</h1>
-          <p className="text-sm font-mono text-muted-foreground">Live-updating HTTP detections · approximate source locations</p>
+          <p className="text-sm font-mono text-muted-foreground">All observed HTTP requests · persistent markers for detections only</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <CollectorControl compact serverId={serverId} />
@@ -25,7 +25,7 @@ export default function MapPage() {
       <DetectionFilters />
       <FeedStatus connection={connection} updatedAt={updatedAt} error={error} onRefresh={refresh} />
       <div className="w-full flex-none">
-        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} mapTarget={mapTarget} mapTargetLoading={mapTargetLoading} showRecentDetections />
+        <ThreatMap key={`${hours}:${serverId}`} events={events} trafficEvents={trafficEvents ?? []} liveEvent={liveTrafficEvent} subscribeToTraffic={subscribeToTraffic} mapTarget={mapTarget} mapTargetLoading={mapTargetLoading} showRecentDetections />
       </div>
     </div>
   );

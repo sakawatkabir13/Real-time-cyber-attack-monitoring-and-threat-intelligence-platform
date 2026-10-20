@@ -25,6 +25,49 @@ afterEach(() => {
 });
 
 describe('live event recovery', () => {
+  it('delivers every normal and suspicious HTTP request without adding either to detection history', async () => {
+    useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
+    vi.stubGlobal('WebSocket', TestSocket);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([]))));
+    const { result } = renderHook(() => useThreatFeed({ serverId: 'spandan-web' }));
+    await act(async () => {});
+    const received: string[] = [];
+    result.current.subscribeToTraffic((item) => received.push(item.id));
+    const traffic = Array.from({ length: 200 }, (_, index) => ({ ...event, id: `http:${index}`,
+      kind: 'http_request', severity: index % 2 ? 'medium' : 'normal' }));
+    act(() => {
+      TestSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'HTTP_TRAFFIC', data: traffic }) });
+      TestSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'HTTP_TRAFFIC', data: traffic }) });
+      TestSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'HTTP_TRAFFIC', data: [{ ...traffic[0], id: 'other', server_id: 'other' }] }) });
+    });
+    expect(received).toEqual(traffic.map((item) => item.id));
+    expect(result.current.trafficEvents).toHaveLength(200);
+    expect(result.current.liveTrafficEvent?.id).toBe('http:199');
+    expect(result.current.events).toHaveLength(0);
+    expect(result.current.mlEvents).toHaveLength(0);
+  });
+
+  it('recovers missed HTTP traffic once on reconnect without animating the initial history', async () => {
+    useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
+    vi.stubGlobal('WebSocket', TestSocket);
+    const history = { ...event, id: 'http:history', kind: 'http_request', severity: 'normal' };
+    const missed = { ...history, id: 'http:missed', timestamp: '2026-09-29T10:01:00Z' };
+    let snapshot = [history];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(
+      url.startsWith('/api/traffic?') ? snapshot : [],
+    ))));
+    const { result } = renderHook(() => useThreatFeed());
+    await waitFor(() => expect(result.current.trafficEvents).toHaveLength(1));
+    expect(result.current.liveTrafficEvent).toBeNull();
+    const received: string[] = [];
+    result.current.subscribeToTraffic((item) => received.push(item.id));
+    snapshot = [missed, history];
+    act(() => TestSocket.instances[0].onopen?.());
+    await waitFor(() => expect(received).toEqual(['http:missed']));
+    act(() => TestSocket.instances[0].onopen?.());
+    await act(async () => {});
+    expect(received).toEqual(['http:missed']);
+  });
   it('delivers every WebSocket detection even when React batches the latest-event state', async () => {
     useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
     vi.stubGlobal('WebSocket', TestSocket);

@@ -114,6 +114,8 @@ async def score_window(base: str) -> bool:
             return False
         if prediction is not None:
             actionable = (int(data.get("rule_threat_count", 0)) == 0
+                          and int(data.get("scanner_request_count", 0)) == 0
+                          and int(data.get("baseline_excluded_count", 0)) == 0
                           and not enumeration and prediction.score >= settings.ML_ALERT_SCORE)
             identity = window_event_id(base)
             async with AsyncSessionLocal() as db:

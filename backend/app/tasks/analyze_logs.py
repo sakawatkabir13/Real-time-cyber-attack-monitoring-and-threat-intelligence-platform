@@ -15,6 +15,7 @@ from app.services.detection_engine import detection_engine
 from app.services.event_pipeline import PendingThreat, persist_threats
 from app.services.geo_lookup import geo_lookup
 from app.services.log_parser import parse_event
+from app.services.http_traffic import HttpObservation, publish_http_requests
 from app.tasks.celery_app import celery_app
 
 
@@ -61,6 +62,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
             error=None,
         )
         pending: list[PendingThreat] = []
+        traffic: list[HttpObservation] = []
         with open(path, "r", encoding="utf-8", errors="ignore") as stream:
             for line_number, line in enumerate(stream, start=1):
                 if not line.strip():
@@ -74,6 +76,7 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
                     rejected += 1
                 else:
                     detected = await detection_engine.process_log(log_entry)
+                    traffic.append(HttpObservation(log_entry, detected))
                     if detected:
                         pending.append(PendingThreat(detected, event_id))
                         detections += 1
@@ -81,6 +84,8 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
                 if len(pending) >= 100 or processed % 100 == 0:
                     async with AsyncSessionLocal() as db:
                         await persist_threats(db, pending)
+                    await publish_http_requests(traffic)
+                    traffic.clear()
                     pending.clear()
                     await save_analysis_status(
                         job_id,
@@ -90,9 +95,10 @@ async def _process_file(job_id: str, path: str, total: int) -> dict[str, object]
                         rejected=rejected,
                         detections=detections,
                     )
-            if pending:
+            if pending or traffic:
                 async with AsyncSessionLocal() as db:
                     await persist_threats(db, pending)
+                await publish_http_requests(traffic)
         return await save_analysis_status(
             job_id,
             state="complete",

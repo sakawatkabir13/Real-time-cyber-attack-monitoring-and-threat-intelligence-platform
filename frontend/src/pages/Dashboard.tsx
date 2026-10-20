@@ -13,7 +13,7 @@ import FeedStatus from '@/components/FeedStatus';
 import DetectionFilters from '@/components/DetectionFilters';
 
 export default function Dashboard() {
-  const { hours, serverId, events, mlEvents, stats, mapTarget, mapTargetLoading, liveEvent, subscribeToDetections, connection, updatedAt, error, refresh } = useDetectionViewFeed();
+  const { hours, serverId, events, mlEvents, stats, mapTarget, mapTargetLoading, trafficEvents, liveTrafficEvent, subscribeToTraffic, connection, updatedAt, error, refresh } = useDetectionViewFeed();
 
   const anomalyData = useMemo(() => {
     return [...mlEvents]
@@ -71,7 +71,7 @@ export default function Dashboard() {
 
       {/* Map */}
       <div style={{ height: 'min(64vh, 600px)' }} className="min-h-[460px]">
-        <ThreatMap key={`${hours}:${serverId}`} events={events} liveEvent={liveEvent} subscribeToDetections={subscribeToDetections} mapTarget={mapTarget} mapTargetLoading={mapTargetLoading} showRecentDetections={false} />
+        <ThreatMap key={`${hours}:${serverId}`} events={events} trafficEvents={trafficEvents ?? []} liveEvent={liveTrafficEvent} subscribeToTraffic={subscribeToTraffic} mapTarget={mapTarget} mapTargetLoading={mapTargetLoading} showRecentDetections={false} />
       </div>
 
       {/* Grid for Anomaly, Feed, Queue */}

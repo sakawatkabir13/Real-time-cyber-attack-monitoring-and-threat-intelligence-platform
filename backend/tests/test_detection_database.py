@@ -29,6 +29,7 @@ from app.routers import ingest
 from app.security import require_dashboard_auth
 from app.services import event_pipeline, incident_grouping, window_scoring
 from app.services.behavioral_features import PENDING_WINDOWS
+from app.services.http_traffic import recent_http_requests
 from app.tasks import flush_traffic_windows
 
 
@@ -62,6 +63,10 @@ async def test_repeated_requests_persist_and_publish_individually_without_duplic
     batch = ingest.AgentBatch(server_id=server_id, events=events)
     try:
         assert (await ingest.ingest_batch(batch, authorization="test"))["duplicates"] == 0
+        traffic = await recent_http_requests(server_id=server_id)
+        assert len(traffic) == 4
+        assert sum(item["severity"] == "normal" for item in traffic) == 1
+        assert sum(item["attack_type"] == kind for item in traffic) == 3
         async with sessions() as db:
             stored = list(await db.scalars(select(ThreatEvent).where(ThreatEvent.server_id == server_id)))
             assert len(stored) == 3
@@ -78,6 +83,7 @@ async def test_repeated_requests_persist_and_publish_individually_without_duplic
         published = publish.await_count
         retry = await ingest.ingest_batch(batch, authorization="test")
         assert retry["duplicates"] == 4
+        assert len(await recent_http_requests(server_id=server_id)) == 4
         assert publish.await_count == published
         async with sessions() as db:
             assert await db.scalar(select(func.count(ThreatEvent.id)).where(ThreatEvent.server_id == server_id)) == 3

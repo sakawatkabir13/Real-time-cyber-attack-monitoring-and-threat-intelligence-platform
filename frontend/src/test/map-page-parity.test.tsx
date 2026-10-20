@@ -22,8 +22,10 @@ beforeEach(() => {
   useDetectionViewStore.setState({ hours: 24, serverId: '' });
   feed.mockReset().mockImplementation(({ hours, serverId }) => ({
     events: [{ id: `${hours}:${serverId}`, source_ip: '203.0.113.7' }], mlEvents: [],
+    trafficEvents: [{ id: `http:${hours}:${serverId}`, source_ip: '203.0.113.8', severity: 'normal' }],
     stats: { attacksPerSecond: 0, criticalAlerts: 0, uniqueIPs: 1, totalThreats: 1 },
     liveEvent: null, subscribeToDetections: () => () => {},
+    liveTrafficEvent: { id: 'http:live', severity: 'normal' }, subscribeToTraffic: () => () => {},
     connection: 'live', updatedAt: null, error: '', refresh: () => {},
   }));
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([
@@ -42,6 +44,8 @@ const assertSameMaps = () => {
   // Both pages must share the same event stream and filters. The dedicated
   // map page intentionally owns the separate recent-detections panel.
   expect(inputs[0].events).toEqual(inputs[1].events);
+  expect(inputs[0].options.trafficEvents).toEqual(inputs[1].options.trafficEvents);
+  expect(inputs[0].options.liveEvent).toEqual({ id: 'http:live', severity: 'normal' });
   const dashboardOptions = { ...inputs[0].options };
   const mapOptions = { ...inputs[1].options };
   delete dashboardOptions.showRecentDetections;

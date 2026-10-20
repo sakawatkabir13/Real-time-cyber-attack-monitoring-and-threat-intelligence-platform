@@ -3,6 +3,7 @@ import { useAppStore } from '../store/appStore';
 
 export interface ThreatEvent {
   id: string;
+  kind?: 'http_request';
   server_id: string;
   source_ip: string;
   dest_port: number | null;
@@ -73,6 +74,13 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
   const [mapTargetLoading, setMapTargetLoading] = useState(true);
   const [liveEvent, setLiveEvent] = useState<ThreatEvent | null>(null);
+  const [trafficEvents, setTrafficEvents] = useState<ThreatEvent[]>([]);
+  const [liveTrafficEvent, setLiveTrafficEvent] = useState<ThreatEvent | null>(null);
+  const trafficListeners = useRef(new Set<(event: ThreatEvent) => void>());
+  const subscribeToTraffic: SubscribeToDetections = useCallback((listener) => {
+    trafficListeners.current.add(listener);
+    return () => { trafficListeners.current.delete(listener); };
+  }, []);
   const detectionListeners = useRef(new Set<(event: ThreatEvent) => void>());
   // Notify each arrival directly: React may batch multiple latest-event updates.
   const subscribeToDetections: SubscribeToDetections = useCallback((listener) => {
@@ -90,12 +98,48 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   useEffect(() => {
     let cancelled = false;
     setEvents([]); setMlEvents([]); setStats(emptyStats); setLiveEvent(null); setUpdatedAt(null); setErrors({});
+    setTrafficEvents([]); setLiveTrafficEvent(null);
+    const seenTraffic = new Set<string>();
+    let trafficInitialized = false;
+    const matchesScope = (event: ThreatEvent) => (!serverId || event.server_id === serverId) &&
+      (!hours || Date.parse(event.timestamp) >= Date.now() - hours * 3600000);
+    const receiveTraffic = (incoming: ThreatEvent[], animate: boolean) => {
+      const matching = incoming.filter(matchesScope);
+      for (const event of matching) {
+        if (seenTraffic.has(event.id)) continue;
+        seenTraffic.add(event.id);
+        if (animate) {
+          setLiveTrafficEvent(event);
+          for (const listener of trafficListeners.current) listener(event);
+        }
+      }
+      // Only recent map telemetry is retained; detections have their own DB history.
+      if (seenTraffic.size > 15000) {
+        for (const id of [...seenTraffic].slice(0, seenTraffic.size - 10000)) seenTraffic.delete(id);
+      }
+      setTrafficEvents((current) => mergeThreatEvents(current, matching));
+    };
     setMapTarget(null); setMapTargetLoading(true);
     setConnection(autoRefresh ? 'connecting' : 'paused');
     const filters = new URLSearchParams();
     if (hours) filters.set('hours', String(hours));
     if (serverId) filters.set('server_id', serverId);
     const suffix = filters.size ? `&${filters}` : '';
+    const loadTraffic = async (recover = false) => {
+      try {
+        const response = await fetch('/api/traffic?limit=5000' + suffix);
+        if (!response.ok) throw new Error(`HTTP traffic unavailable (${response.status})`);
+        const fetched = await response.json() as ThreatEvent[];
+        if (!Array.isArray(fetched)) throw new Error('Invalid HTTP traffic response');
+        if (!cancelled) {
+          receiveTraffic([...fetched].reverse(), recover && trafficInitialized);
+          trafficInitialized = true;
+          setErrors((current) => ({ ...current, traffic: '' }));
+        }
+      } catch (error) {
+        if (!cancelled) setErrors((current) => ({ ...current, traffic: error instanceof Error ? error.message : 'HTTP traffic unavailable' }));
+      }
+    };
     const loadEvents = async (url: string, update: (events: ThreatEvent[]) => void) => {
       try {
         const response = await fetch(url);
@@ -138,6 +182,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
     };
 
     void loadThreats();
+    void loadTraffic();
     void loadMlEvents();
     void loadMapConfig();
     void loadStats();
@@ -155,6 +200,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
           setConnection('live');
           // Fetch the recent snapshot again after every reconnection.
           void loadThreats();
+          void loadTraffic(true);
           void loadMlEvents();
           void loadStats();
           void useAppStore.getState().loadAlerts();
@@ -163,7 +209,9 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
           if (cancelled) return;
           try {
             const data = JSON.parse(message.data);
-            if (data.type === 'NEW_THREAT') {
+            if (data.type === 'HTTP_TRAFFIC' && Array.isArray(data.data)) {
+              receiveTraffic(data.data as ThreatEvent[], true);
+            } else if (data.type === 'NEW_THREAT') {
               const event = data.data as ThreatEvent;
               if (serverId && event.server_id !== serverId) return;
               if (hours && Date.parse(event.timestamp) < Date.now() - hours * 3600000) return;
@@ -193,6 +241,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
     const statsInterval = window.setInterval(() => { void loadStats(); }, 5000);
     const backfillInterval = window.setInterval(() => {
       void loadThreats();
+      void loadTraffic(true);
       void loadMlEvents();
     }, 30000);
     return () => {
@@ -208,5 +257,5 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
   }, [autoRefresh, hours, serverId, refreshVersion]);
 
   const cutoff = hours ? Date.now() - hours * 3600000 : 0;
-  return { events: events.filter((event) => Date.parse(event.timestamp) >= cutoff), mlEvents: mlEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), stats, mapTarget, mapTargetLoading, liveEvent, subscribeToDetections, connection, updatedAt, error: Object.values(errors).filter(Boolean).join(' · '), refresh: () => setRefreshVersion((value) => value + 1) };
+  return { events: events.filter((event) => Date.parse(event.timestamp) >= cutoff), mlEvents: mlEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), trafficEvents: trafficEvents.filter((event) => Date.parse(event.timestamp) >= cutoff), liveTrafficEvent, subscribeToTraffic, stats, mapTarget, mapTargetLoading, liveEvent, subscribeToDetections, connection, updatedAt, error: Object.values(errors).filter(Boolean).join(' · '), refresh: () => setRefreshVersion((value) => value + 1) };
 }
