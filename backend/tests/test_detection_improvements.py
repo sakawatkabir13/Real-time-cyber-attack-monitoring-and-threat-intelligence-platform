@@ -316,9 +316,9 @@ def test_schema_three_training_artifact_and_inference_are_compatible(scope, tmp_
     # training data, attack labels, or an accuracy evaluation.
     rng = np.random.default_rng(17)
     rows = []
-    for _ in range(250):
+    for index in range(250):
         fields = {name: float(rng.uniform(0.4, 0.6)) for name in FEATURE_NAMES[scope]}
-        fields["window_start"] = datetime(2026, 8, 5, tzinfo=timezone.utc)
+        fields["window_start"] = datetime(2026, 8, 5, tzinfo=timezone.utc) + timedelta(minutes=index)
         rows.append(SimpleNamespace(**fields))
     constructor = train_model.IsolationForest
     monkeypatch.setattr(train_model, "IsolationForest", lambda **kwargs: constructor(**{**kwargs, "n_jobs": 1}))

@@ -158,16 +158,26 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
       (fetched) => setEvents((current) => mergeThreatEvents(current, fetched)));
     const loadMlEvents = () => loadEvents('/api/events?ml_only=true&limit=20' + suffix,
       (fetched) => setMlEvents((current) => mergeThreatEvents(current, fetched, 20)));
+    let mapConfigInFlight = false;
     const loadMapConfig = async () => {
+      if (mapConfigInFlight) return;
+      mapConfigInFlight = true;
       try {
         const response = await fetch(`/api/map-config${serverId ? `?server_id=${encodeURIComponent(serverId)}` : ''}`);
         if (!response.ok) throw new Error(`Map configuration unavailable (${response.status})`);
         const data = await response.json() as { target?: MapTarget | null };
-        if (!cancelled) setMapTarget(data.target ?? null);
+        if (!cancelled) {
+          setMapTarget(data.target ?? null);
+          setErrors((current) => ({ ...current, mapConfig: '' }));
+        }
       } catch (error) {
-        if (!cancelled) setMapTarget(null);
+        // Keep the last good destination during a transient API failure. Both
+        // map pages surface the error and retry on reconnect/periodic recovery.
+        if (!cancelled) setErrors((current) => ({ ...current,
+          mapConfig: error instanceof Error ? error.message : 'Map configuration unavailable' }));
         console.error(error);
       } finally {
+        mapConfigInFlight = false;
         if (!cancelled) setMapTargetLoading(false);
       }
     };
@@ -205,6 +215,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
           void loadThreats();
           void loadTraffic(true);
           void loadMlEvents();
+          void loadMapConfig();
           void loadStats();
           void useAppStore.getState().loadAlerts();
         };
@@ -246,6 +257,7 @@ export function useThreatFeed({ hours, serverId = '' }: { hours?: number; server
       void loadThreats();
       void loadTraffic(true);
       void loadMlEvents();
+      void loadMapConfig();
     }, 30000);
     return () => {
       cancelled = true;

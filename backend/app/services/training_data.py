@@ -16,6 +16,7 @@ def snapshot_training_eligible(data: dict, *, enumeration: bool, anomaly_score: 
         int(data.get("rule_threat_count", 0)) == 0
         and int(data.get("scanner_request_count", 0)) == 0
         and int(data.get("baseline_excluded_count", 0)) == 0
+        and int(data.get("demonstration_request_count", 0)) == 0
         and not enumeration
         and (anomaly_score is None or anomaly_score < settings.ML_ALERT_SCORE)
     )

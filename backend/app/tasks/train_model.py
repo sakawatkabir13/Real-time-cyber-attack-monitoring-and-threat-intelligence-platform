@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from bisect import bisect_left
 import logging
 import os
 import tempfile
@@ -42,28 +43,38 @@ def _select_training_rows(
 def _fit_scope(scope: str, rows: list[TrafficWindow]) -> tuple[dict | None, str | None]:
     if len(rows) < settings.ML_MIN_TRAINING_WINDOWS:
         return None, "insufficient clean traffic windows"
+    rows = sorted(rows, key=lambda row: row.window_start)
     transformed = np.vstack(
         [transform_vector(scope, window_values(row)) for row in rows]
     )
     raw = np.vstack([raw_vector(scope, window_values(row)) for row in rows])
 
-    # Remove only extreme points before fitting. Known rule incidents were already
-    # excluded; this additional guard reduces slow baseline poisoning.
-    median = np.median(transformed, axis=0)
-    mad = np.median(np.abs(transformed - median), axis=0)
+    # Fit, calibration and validation are disjoint chronological periods. Keep
+    # all sources from one timestamp together to avoid leaking one burst across
+    # partitions. Training-set scores are optimistically biased and must not be
+    # used to calibrate the scores of unseen production traffic.
+    boundaries = [index for index in range(1, len(rows))
+                  if rows[index].window_start != rows[index - 1].window_start]
+    if len(boundaries) < 2:
+        return None, "three distinct traffic periods are required for fit, calibration and validation"
+    fit_index = min(bisect_left(boundaries, int(len(rows) * 0.6)), len(boundaries) - 2)
+    fit_end = boundaries[fit_index]
+    calibration_index = min(max(fit_index + 1, bisect_left(boundaries, int(len(rows) * 0.8))), len(boundaries) - 1)
+    calibration_end = boundaries[calibration_index]
+    fit_values = transformed[:fit_end]
+    # Learn the poisoning guard only from the fitting period. Never discard
+    # difficult validation observations to make a candidate pass promotion.
+    median = np.median(fit_values, axis=0)
+    mad = np.median(np.abs(fit_values - median), axis=0)
     safe_mad = np.maximum(mad, 0.05)
     keep = np.all(np.abs((transformed - median) / safe_mad) < 12.0, axis=1)
-    transformed = transformed[keep]
-    raw = raw[keep]
-    kept_rows = [row for row, accepted in zip(rows, keep) if accepted]
-    if len(kept_rows) < settings.ML_MIN_TRAINING_WINDOWS:
+    training = transformed[:fit_end][keep[:fit_end]]
+    calibration = transformed[fit_end:calibration_end][keep[fit_end:calibration_end]]
+    validation = transformed[calibration_end:]
+    if len(training) < 3 or len(calibration) < 2 or len(validation) < 2:
+        return None, "insufficient independent fit, calibration or validation samples after quarantine"
+    if len(training) + len(calibration) + len(validation) < settings.ML_MIN_TRAINING_WINDOWS:
         return None, "too many extreme or potentially poisoned windows"
-
-    split = max(1, int(len(kept_rows) * 0.8))
-    if split >= len(kept_rows):
-        split = len(kept_rows) - 1
-    training = transformed[:split]
-    validation = transformed[split:]
 
     model = IsolationForest(
         n_estimators=250,
@@ -73,7 +84,7 @@ def _fit_scope(scope: str, rows: list[TrafficWindow]) -> tuple[dict | None, str 
         n_jobs=-1,
     )
     model.fit(training)
-    anomaly_values = -model.score_samples(training)
+    anomaly_values = -model.score_samples(calibration)
     quantiles = np.quantile(anomaly_values, [0.50, 0.95, 0.99, 0.999])
     if float(quantiles[3] - quantiles[0]) < 1e-6:
         return None, "degenerate feature distribution"
@@ -97,7 +108,7 @@ def _fit_scope(scope: str, rows: list[TrafficWindow]) -> tuple[dict | None, str 
         )
     )
     if validation_alert_fraction > settings.ML_MAX_VALIDATION_ALERT_FRACTION:
-        return None, "validation false-alert rate is too high for safe promotion"
+        return None, "validation alert fraction is too high for safe promotion"
     return {
         "model": model,
         "features": list(FEATURE_NAMES[scope]),
@@ -106,11 +117,16 @@ def _fit_scope(scope: str, rows: list[TrafficWindow]) -> tuple[dict | None, str 
             np.median(np.abs(training - np.median(training, axis=0)), axis=0),
             0.05,
         ).tolist(),
-        "raw_median": np.median(raw, axis=0).tolist(),
+        "raw_median": np.median(raw[:fit_end][keep[:fit_end]], axis=0).tolist(),
         "score_quantiles": quantile_mapping,
-        "sample_count": len(kept_rows),
-        "window_start": kept_rows[0].window_start.isoformat(),
-        "window_end": kept_rows[-1].window_start.isoformat(),
+        "sample_count": len(training) + len(calibration) + len(validation),
+        "fit_samples": len(training),
+        "calibration_samples": len(calibration),
+        "validation_samples": len(validation),
+        "calibration_method": "chronological_holdout_v1",
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "window_start": rows[0].window_start.isoformat(),
+        "window_end": rows[-1].window_start.isoformat(),
         "training_outlier_fraction": float(np.mean(model.predict(training) == -1)),
         "validation_q99_fraction": validation_q99_fraction,
         "validation_alert_fraction": validation_alert_fraction,
@@ -159,6 +175,13 @@ def train_model_task() -> dict:
                 existing = joblib.load(settings.MODEL_PATH)
                 if isinstance(existing, dict) and existing.get("schema_version") == 3:
                     existing_models = dict(existing.get("models", {}))
+                    # Retaining one scope while replacing another must not
+                    # freshen its timestamp or relabel detections as the new
+                    # component version.
+                    for group in existing_models.values():
+                        for component in group.get("servers", {}).values():
+                            component.setdefault("trained_at", existing.get("trained_at"))
+                            component.setdefault("model_version", existing.get("version"))
             except Exception:
                 logger.warning("Existing model could not be retained", exc_info=True)
         with Session(engine, expire_on_commit=False) as session:
@@ -196,6 +219,7 @@ def train_model_task() -> dict:
                             )
                         )
                         continue
+                    component["model_version"] = version
                     trained[scope][server_id] = component
                     results[scope][server_id] = {
                         "status": "trained",
@@ -222,6 +246,10 @@ def train_model_task() -> dict:
                                     "validation_alert_fraction"
                                 ],
                                 "score_quantiles": component["score_quantiles"],
+                                "calibration_method": component["calibration_method"],
+                                "fit_samples": component["fit_samples"],
+                                "calibration_samples": component["calibration_samples"],
+                                "validation_samples": component["validation_samples"],
                             },
                         )
                     )
@@ -245,7 +273,10 @@ def train_model_task() -> dict:
             session.commit()
         logger.info("Behavioral training %s completed: %s", version, results)
         return {
-            "status": "trained" if trained_any else "warming_up",
+            "status": "trained" if trained_any else (
+                "rejected" if any(result["status"] == "rejected" for group in results.values() for result in group.values())
+                else "warming_up"
+            ),
             "version": version,
             "scopes": results,
         }

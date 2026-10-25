@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { advancePlayback, emptyPlayback, MAX_ACTIVE_ROUTES, ROUTE_LIFETIME_MS } from '@/components/mapPlayback';
+import { advancePlayback, emptyPlayback, enqueueRoute, pausePlayback, MAX_ACTIVE_ROUTES, MAX_PENDING_ROUTES, ROUTE_LIFETIME_MS } from '@/components/mapPlayback';
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
 describe('map playback', () => {
+  it('bounds overload, counts omitted animations and preserves FIFO for retained requests', () => {
+    const events = Array.from({ length: MAX_PENDING_ROUTES + 5 }, (_, index) => ({
+      id: String(index), timestamp: '2026-10-21T00:00:00Z',
+    } as ThreatEvent));
+    let state = events.reduce(enqueueRoute, emptyPlayback);
+    expect(state.pending).toEqual(events.slice(5));
+    expect(state.pending).toHaveLength(MAX_PENDING_ROUTES);
+    expect(state.omittedRoutes).toBe(5);
+    expect(enqueueRoute(state, events.at(-1)!)).toBe(state);
+    state = advancePlayback(state, 1000);
+    expect(state.active.map((route) => route.event.id)).toEqual(events.slice(5, 5 + MAX_ACTIVE_ROUTES).map((item) => item.id));
+    expect(state.omittedRoutes).toBe(5);
+  });
+
+  it('applies the same queue bound when pausing a full backlog', () => {
+    const active = Array.from({ length: MAX_ACTIVE_ROUTES }, (_, index) => ({
+      event: { id: `active-${index}` } as ThreatEvent, startedAt: 0, lane: 0,
+    }));
+    const pending = Array.from({ length: MAX_PENDING_ROUTES }, (_, index) => ({ id: `pending-${index}` } as ThreatEvent));
+    const state = pausePlayback({ ...emptyPlayback, active, pending, omittedRoutes: 7 });
+    expect(state.active).toHaveLength(0);
+    expect(state.pending).toEqual(pending);
+    expect(state.omittedRoutes).toBe(7 + MAX_ACTIVE_ROUTES);
+  });
+
   it('shows 96 simultaneous arcs and preserves overflow until capacity is available', () => {
     expect(MAX_ACTIVE_ROUTES).toBe(96);
     const events = Array.from({ length: 101 }, (_, index) => ({

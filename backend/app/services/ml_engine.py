@@ -124,7 +124,7 @@ class MLEngine:
             scope=scope,
             score=score,
             explanation=self._explanation(scope, score, vector, component),
-            model_version=str(self.bundle["version"]),
+            model_version=str(component.get("model_version", self.bundle["version"])),
         )
 
     def status(self) -> dict[str, Any]:
@@ -146,6 +146,11 @@ class MLEngine:
                             "samples": model.get("sample_count", 0),
                             "window_start": model.get("window_start"),
                             "window_end": model.get("window_end"),
+                            "trained_at": model.get("trained_at", self.bundle.get("trained_at")),
+                            "calibration_method": model.get("calibration_method", "legacy_training_quantiles"),
+                            "fit_samples": model.get("fit_samples"),
+                            "calibration_samples": model.get("calibration_samples"),
+                            "validation_samples": model.get("validation_samples"),
                         }
                         for server_id, model in component.get("servers", {}).items()
                     },

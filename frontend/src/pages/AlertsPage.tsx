@@ -75,7 +75,9 @@ export default function AlertsPage() {
         <DialogContent><DialogTitle>Resolve this alert?</DialogTitle><DialogDescription>This closes the alert workflow. It does not mark traffic legitimate or malicious; record that separately in the investigation.</DialogDescription><div className="flex flex-wrap justify-end gap-3"><button disabled={busy} onClick={() => setPendingResolve(null)} className="rounded border border-border px-4 py-2">Cancel</button><button disabled={busy} onClick={() => void resolve()} className="rounded bg-primary px-4 py-2 text-primary-foreground">{busy ? 'Resolving…' : 'Confirm resolution'}</button></div></DialogContent>
       </Dialog>
 
-      <RelatedIncidents />
+      <RelatedIncidents serverId={serverFilter} attackType={typeFilter}
+        minimumSeverity={severityFilter} verdict={verdictFilter}
+        days={days ? Number(days) : undefined} search={search} />
 
       <AnimatePresence mode="popLayout">
         {unacked.length === 0 && (

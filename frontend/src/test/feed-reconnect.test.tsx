@@ -20,11 +20,62 @@ class TestSocket {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   TestSocket.instances = [];
 });
 
 describe('live event recovery', () => {
+  it('retries unavailable map configuration on reconnect and exposes the error', async () => {
+    useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('WebSocket', TestSocket);
+    let mapRequests = 0;
+    const target = { serverId: 'spandan-web', lat: 39.05, lng: -77.49 };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.startsWith('/api/map-config')) {
+        mapRequests += 1;
+        return mapRequests === 1 ? new Response('{}', { status: 503 })
+          : new Response(JSON.stringify({ target }));
+      }
+      return new Response(JSON.stringify([]));
+    }));
+    const { result } = renderHook(() => useThreatFeed());
+    await waitFor(() => expect(result.current.error).toContain('Map configuration unavailable (503)'));
+    expect(result.current.mapTargetLoading).toBe(false);
+    act(() => TestSocket.instances[0].onopen?.());
+    await waitFor(() => expect(result.current.mapTarget).toEqual(target));
+    expect(result.current.error).toBe('');
+  });
+
+  it('retains a good map destination during failed refreshes and retries periodically', async () => {
+    useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('WebSocket', TestSocket);
+    const target = { serverId: 'spandan-web', lat: 39.05, lng: -77.49 };
+    let failing = false;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith('/api/map-config')) return failing ? new Response('{}', { status: 503 })
+        : new Response(JSON.stringify({ target }));
+      return new Response(JSON.stringify([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useThreatFeed());
+    await act(async () => {});
+    expect(result.current.mapTarget).toEqual(target);
+    failing = true;
+    await act(async () => { TestSocket.instances[0].onopen?.(); });
+    expect(result.current.error).toContain('Map configuration unavailable (503)');
+    expect(result.current.mapTarget).toEqual(target);
+    failing = false;
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(result.current.error).toBe('');
+    expect(result.current.mapTarget).toEqual(target);
+    expect(fetchMock.mock.calls.filter(([url]) => url.startsWith('/api/map-config'))).toHaveLength(3);
+  });
+
   it('animates requests received during initial connection setup but not older history', async () => {
     useAppStore.setState((state) => ({ settings: { ...state.settings, autoRefresh: true } }));
     vi.stubGlobal('WebSocket', TestSocket);

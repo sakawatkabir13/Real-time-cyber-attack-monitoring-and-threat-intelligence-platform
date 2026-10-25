@@ -103,10 +103,18 @@ def _model_is_fresh(status_payload: dict) -> bool | None:
     if status_payload.get("state") != "ready":
         return None
     try:
-        trained_at = datetime.fromisoformat(str(status_payload["trained_at"]))
-        if trained_at.tzinfo is None:
-            trained_at = trained_at.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) - trained_at <= timedelta(days=2)
+        components = [model for group in status_payload.get("models", {}).values()
+                      for model in group.get("servers", {}).values()]
+        timestamps = [model.get("trained_at", status_payload.get("trained_at")) for model in components]
+        timestamps = timestamps or [status_payload["trained_at"]]
+        now = datetime.now(timezone.utc)
+        for value in timestamps:
+            trained_at = datetime.fromisoformat(str(value))
+            if trained_at.tzinfo is None:
+                trained_at = trained_at.replace(tzinfo=timezone.utc)
+            if not timedelta(0) <= now - trained_at <= timedelta(days=2):
+                return False
+        return True
     except (KeyError, TypeError, ValueError):
         return False
 
@@ -501,7 +509,7 @@ async def analyze_log_file(file: UploadFile = File(...)):
             active_status = json.loads(active_raw) if active_raw else {}
         except json.JSONDecodeError:
             active_status = {}
-        if active_status.get("state") in {"queued", "running"}:
+        if active_status.get("state") in {"queued", "running", "retrying"}:
             raise HTTPException(409, "A log analysis is already running")
         await client.delete(ACTIVE_ANALYSIS_KEY)
 
@@ -511,10 +519,13 @@ async def analyze_log_file(file: UploadFile = File(...)):
     upload_dir = Path(settings.ANALYSIS_UPLOAD_DIR).resolve()
     path = upload_dir / f"{job_id}.log"
     try:
-        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        upload_dir.chmod(0o700)
         # The upload is already bounded and resident in memory. A direct write
         # avoids leaving an executor job behind if the API process shuts down.
-        path.write_bytes(content)
+        with path.open("xb") as stream:
+            path.chmod(0o600)
+            stream.write(content)
         await save_analysis_status(
             job_id,
             state="queued",

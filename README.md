@@ -50,10 +50,8 @@ Teams that run their own infrastructure often can't see who is hitting their ser
 10. [Docker Deployment](#docker-deployment)
 11. [Remote Agent](#remote-agent)
 12. [Defensive-Use Disclaimer](#defensive-use-disclaimer)
-13. [Contributing](#contributing)
-14. [Security](#security)
-15. [License](#license)
-16. [Acknowledgements](#acknowledgements)
+13. [License](#license)
+14. [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -84,9 +82,9 @@ All live testing in the video ran against my own deployment. Vanguard monitors a
 
 Vanguard-360 collects structured access-log events from one or more authorized servers through a lightweight collector. Explainable HTTP rules check each event for known signatures, and behavioral anomaly models score completed server and source traffic windows for unusual patterns once the models are ready. Ingestion uses authenticated batches with stable event identifiers, so delivery is retry-safe and out-of-order events are handled.
 
-The dashboard animates every observed request on a live map, with neutral routes for ordinary traffic and severity colors for detections. Persistent source markers and counts stay detection-only. Repeated findings are deduplicated into alerts. You can acknowledge them, record investigation outcomes, and review related activity. You can also search IP history, enrich findings with optional reputation and geolocation services, analyze historical log files, and read plain-language AI summaries.
+The dashboard animates geolocatable observed requests on a live map, with neutral routes for ordinary traffic and severity colors for detections. Persistent source markers and counts stay detection-only. Playback is bounded, with an explicit notice if an overloaded animation backlog is shortened; stored detections are unaffected. Repeated findings are deduplicated into alerts. You can acknowledge them, record investigation outcomes, and review related activity. You can also search IP history, enrich findings with optional reputation and geolocation services, analyze historical log files, and read plain-language AI summaries.
 
-For operations, you can monitor collector heartbeats and pipeline health, pause or resume authorized collectors, and apply retention cleanup. The stack is built for self-hosting. Signed session cookies protect the dashboard, sensitive endpoints are rate-limited, production secrets are validated, and everything sits behind a single Nginx ingress. Events and reviews persist in PostgreSQL, Redis holds windows and queues, and Celery runs scheduled work. The repository includes backend tests, frontend tests, linting, dependency checks, and Docker-ready local builds.
+For operations, you can monitor collector heartbeats and pipeline health, pause or resume authorized collectors, and apply retention cleanup. The stack is built for self-hosting. Signed session cookies protect the dashboard when authentication is enabled, sensitive endpoints are rate-limited, production secrets are validated, and everything sits behind a single Nginx ingress. Events and reviews persist in PostgreSQL, Redis holds windows and queues, and Celery runs scheduled work. The repository includes backend tests, frontend tests, linting, dependency checks, and Docker-ready local builds.
 
 Detection results are investigative signals, not automatic proof of malicious intent. Source locations and map routes are approximate representations of observed HTTP data.
 
@@ -121,8 +119,8 @@ flowchart TD
 ### Key flows
 
 - Single ingress: The bundled Nginx container is the only externally exposed service. The frontend and backend never accept direct traffic, so the stack needs only one port, which you can put behind your own domain and TLS proxy.
-- Idempotent ingestion: Every event carries a stable `event_id`; the backend enforces uniqueness, so retries and out-of-order delivery never produce duplicates.
-- Detection pipeline: Every ingested event goes through a volumetric check, then signature rules, then behavioral scoring (only once enough clean data exists).
+- Idempotent ingestion: Collector events carry stable `event_id` values. Detection storage enforces uniqueness and recent delivery retries are deduplicated. Late contextual rules revisit the latest affected five-minute interval while its Redis counters are retained; this is bounded correction, not unlimited historical reprocessing.
+- Detection pipeline: Each event updates contextual counters and passes through signature rules. Behavioral models score completed server/source windows independently once compatible models are available.
 - Alert deduplication: High and critical severity events are coalesced into a single alert record with an occurrence counter instead of creating duplicates.
 - Collector fleet: Each agent heartbeats in, reports its desired-state, and can be paused or resumed remotely. Offline state is derived from a stale-heartbeat threshold.
 
@@ -130,13 +128,13 @@ flowchart TD
 
 ## API Reference
 
-All endpoints are served under `/api`, behind the bundled Nginx.
+HTTP endpoints are served under `/api`; the WebSocket stream uses `/ws`. Both sit behind the bundled Nginx. Session requirements below apply when `AUTH_DISABLED=false`.
 
 | Method | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
 | `POST` | `/api/auth/login` | None | Authenticate and receive a session cookie |
-| `POST` | `/api/auth/logout` | Session | End the current session |
-| `GET` | `/api/auth/status` | Session | Check current auth state |
+| `POST` | `/api/auth/logout` | None | Clear the current session cookie |
+| `GET` | `/api/auth/status` | None | Check current auth state |
 | `GET` | `/api/health` | None | Liveness + Redis/PostgreSQL connectivity check |
 | `WS` | `/ws` | Session | Real-time threat and alert event stream |
 | `POST` | `/api/ingest/batch` | Collector token | Agent log ingestion endpoint |
@@ -262,15 +260,24 @@ To start monitoring a server, install the agent found in [`agent/`](agent/) on t
 | `docker compose restart` | Restart all services |
 | `docker compose logs -f` | Follow logs from all services |
 | `docker compose exec backend alembic upgrade head` | Apply migrations manually |
-| `docker compose exec backend pytest -v` | Run the backend test suite inside the container |
 
 ### Backend (inside `backend/`)
+
+Production images intentionally omit test dependencies. For local development, create a separate environment first:
+
+```bash
+python3.11 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+```
 
 ```bash
 pytest -v                 # run tests
 alembic upgrade head      # apply migrations
 uvicorn app.main:app --reload
 ```
+
+PostgreSQL integration tests require `VANGUARD_TEST_DATABASE_URL` pointing to a migrated disposable database named `vanguard_test*`. Never point tests at production. CI supplies its own temporary PostgreSQL service; local runs without that variable skip integration tests.
 
 ### Frontend (inside `frontend/`)
 
@@ -380,7 +387,7 @@ Full reference with defaults lives in [`.env.example`](./.env.example).
 These variables need more explanation than a table row allows:
 
 - `CORS_ORIGINS`: leave this empty. The frontend and API are same-origin behind the bundled Nginx, so production needs no cross-origin configuration. Adding origins widens your attack surface.
-- `AUTH_DISABLED`: makes the dashboard public. It bypasses dashboard session and dashboard WebSocket authentication, but collector bearer-token authentication stays enabled. Keep it `false` unless you intentionally want a public dashboard.
+- `AUTH_DISABLED`: makes the dashboard public, including collector controls, alert modifications and log uploads. This is not a read-only role. It bypasses dashboard session and WebSocket authentication, but collector bearer-token authentication stays enabled. Keep it `false` except for an intentionally unrestricted demonstration.
 - `COOKIE_SECURE`: must be `true` in production. The backend refuses to start otherwise (see `validate_production_secrets` in `backend/app/config.py`).
 - `ML_MIN_TRAINING_WINDOWS`: controls when the behavioral IsolationForest models start scoring. Too low and you train on noise; too high and you get no ML coverage early in a deployment.
 - `ML_ALERT_SCORE`: the anomaly-score threshold (0 to 100) above which a flagged event becomes a persisted ML alert. Tune it together with `ML_CONTAMINATION`.
@@ -389,10 +396,17 @@ These variables need more explanation than a table row allows:
 - `GROQ_API_KEY`: without it, the threat summary endpoint returns an "AI disabled" message instead of a plain-language analysis.
 - `GROQ_MODEL`: selects the Groq-hosted model used for summaries. The default is `openai/gpt-oss-120b`.
 
-Manual log uploads are copied to a private shared Docker volume and processed by
-Celery with late acknowledgement. Progress lives in Redis, so restarting the API
-does not discard an in-flight job. Stable per-line event IDs make a worker
-redelivery safe.
+Manual log uploads are copied to private shared storage and processed by Celery
+with late acknowledgement. Progress lives in Redis. Transient dependency errors
+retry up to five times with backoff; the input is retained for retries and removed
+after completion or terminal failure, with a two-day orphan retention limit.
+Stable per-line event IDs make worker redelivery safe.
+
+The scheduled GitHub health monitor requires the repository variable
+`VANGUARD_MONITOR_ENABLED=true` and the `MONITOR_SMTP_APP_PASSWORD` secret for
+Gmail delivery. An SMTP secret alone does not enable scheduled checks. Failed
+notifications retry on subsequent checks without repeating an already delivered
+outage email. No automatic deployment workflow is enabled.
 
 ### Detection Pipeline
 
@@ -404,11 +418,20 @@ Every ingested event is evaluated in order:
 
 Detected suspicious events are persisted, not every normal request. Traffic summaries retain normal activity for training. A finding is not proof of an attack: human investigation records the outcome. High/critical events and ML findings create deduplicated alerts.
 
-The map receives all valid ingested HTTP requests through a separate WebSocket feed. Normal requests produce transient neutral arcs, not persistent source dots, detection counts, or alerts. Redis retains up to `MAP_TRAFFIC_LIMIT` recent requests (default 5,000, at most seven days) for reconnect recovery; it is not a complete access-log archive. Requests without reliable source or destination coordinates cannot be drawn. Heavy bursts are queued for animation rather than silently sampled. Query strings and request bodies are not included in normal map telemetry.
+The map receives valid ingested HTTP requests through a separate WebSocket feed. Normal requests produce transient neutral arcs, not persistent source dots, detection counts, or alerts. Redis retains up to `MAP_TRAFFIC_LIMIT` recent requests (default 5,000, at most seven days) for reconnect recovery; it is not a complete access-log archive. Requests without reliable source or destination coordinates cannot be drawn. Up to 96 routes animate at once with at most 1,000 waiting; sustained overload omits the oldest pending animations with a visible count, not stored detections. Query strings and request bodies are not included in normal map telemetry.
 
 Known scanner indicators, including ffuf's `Fuzz Faster U Fool` user-agent, exclude both source and server windows from baseline training regardless of their ML score. Rate-limited login requests also exclude their windows; repeated authentication rejections can trigger a possible brute-force finding. HTTP 429 means throttling, not proof that a password was invalid or an account was compromised.
 
 Accuracy metrics still require a real labeled holdout.
+
+Model fitting, score calibration and promotion validation use separate chronological
+periods, with equal-timestamp source windows kept together. Validation observations
+are not removed to make promotion pass. Rejected candidates leave the last good
+model in place; component timestamps preserve honest freshness reporting. This
+baseline check is not an independent accuracy measurement. Bundled demo event IDs
+and `Vanguard-Demo` user-agents exclude their windows from future baseline training
+without suppressing their detection or ML scoring. Existing historical data needs
+independent provenance review; new safeguards do not relabel old windows automatically.
 
 ---
 
@@ -423,17 +446,17 @@ docker compose up --build -d
 # Follow logs
 docker compose logs -f
 
-# Run the backend test suite inside the container
-docker compose exec backend pytest -v
+# Tests use the separate development environment described above.
 
 # Apply migrations or re-train
 docker compose exec backend alembic upgrade head
-docker compose exec backend python -m app.tasks.train_model
+docker compose exec backend python -c 'from app.tasks.train_model import train_model_task; print(train_model_task.delay().id)'
 
 # Tear down (keeps volumes)
 docker compose down
 
 # Tear down (removes volumes too)
+# WARNING: permanently removes database, Redis and model data. Not an upgrade step.
 docker compose down -v
 ```
 

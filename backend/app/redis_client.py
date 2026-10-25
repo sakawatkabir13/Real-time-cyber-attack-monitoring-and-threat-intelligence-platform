@@ -30,6 +30,42 @@ return redis.call('ZCOUNT', KEYS[1], '(' .. ARGV[2], ARGV[1]) +
 """
 
 
+# Register all contextual counters atomically, then revisit the latest observed
+# five-minute context affected by this request. Unlike a global high-water mark,
+# the endpoint is strictly less than event_time + window: unrelated later traffic
+# cannot absorb historical batches. Three adjacent buckets bound the lookup.
+# This deliberately revisits one latest affected context, not every historical
+# endpoint. Cross-batch late delivery is supported while these receipt-TTL keys
+# remain available. Stable IDs make registration retry-safe.
+CONTEXT_COUNT_SCRIPT = """
+local stamp, window, ttl = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])
+local fresh = redis.call('ZADD', KEYS[2], 'NX', ARGV[1], ARGV[4])
+for i=1,#KEYS/3 do
+    local current = KEYS[(i-1)*3+2]
+    if ARGV[4+i] == '1' then
+        if fresh == 1 then redis.call('ZADD', current, 'NX', ARGV[1], ARGV[4]) end
+        redis.call('EXPIRE', current, ttl)
+    end
+end
+local finish = stamp
+local upper = '(' .. string.format('%.17g', stamp + window)
+for _,key in ipairs({KEYS[2], KEYS[3]}) do
+    local latest = redis.call('ZREVRANGEBYSCORE', key, upper, ARGV[1], 'WITHSCORES', 'LIMIT', 0, 1)
+    if #latest > 0 then finish = math.max(finish, tonumber(latest[2])) end
+end
+local lower = '(' .. string.format('%.17g', finish - window)
+local result = {string.format('%.17g', finish)}
+for i=1,#KEYS/3 do
+    local total = 0
+    for offset=1,3 do
+        total = total + redis.call('ZCOUNT', KEYS[(i-1)*3+offset], lower, string.format('%.17g', finish))
+    end
+    table.insert(result, total)
+end
+return result
+"""
+
+
 class RedisClient:
     def __init__(self):
         self.redis = None
@@ -123,6 +159,33 @@ class RedisClient:
             scope=f"limit:{scope}",
         )
         return count <= limit
+
+    async def contextual_event_counts(
+        self, ip: str, *, server_id: str, timestamp: float,
+        event_id: str, counters: dict[str, bool], window_size: int = 300,
+    ) -> tuple[dict[str, int], float]:
+        """Count the latest affected event-time context, including bounded late data.
+
+        A late request may use already observed later requests, but never an
+        endpoint >= timestamp + window_size, which would exclude that request.
+        Historical intervals separated by five minutes are not combined.
+        """
+        if not counters.get("requests"):
+            raise ValueError("Contextual counting requires the requests counter")
+        scopes = ["requests", *(scope for scope in counters if scope != "requests")]
+        bucket = int(timestamp // window_size)
+        prefix = f"event-rate:{self._key_part(server_id)}:{self._key_part(ip)}"
+        keys = [
+            f"{prefix}:{self._key_part(scope)}:{period}"
+            for scope in scopes for period in (bucket - 1, bucket, bucket + 1)
+        ]
+        result = await self._require_client().eval(
+            CONTEXT_COUNT_SCRIPT, len(keys), *keys,
+            timestamp, window_size,
+            max(settings.EVENT_COUNTER_TTL_SECONDS, window_size * 2), event_id,
+            *("1" if counters[scope] else "0" for scope in scopes),
+        )
+        return dict(zip(scopes, map(int, result[1:]))), float(result[0])
 
     async def claim_ingest_event(self, server_id: str, event_id: str) -> str:
         client = self._require_client()

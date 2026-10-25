@@ -1,6 +1,9 @@
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
 export const MAX_ACTIVE_ROUTES = 96;
+// A browser visualization is not an access-log archive. Bound queued animation
+// work during overload (or a long pause), and report every omitted animation.
+export const MAX_PENDING_ROUTES = 1000;
 export const ROUTE_LIFETIME_MS = 4200;
 // Timestamp-matched demo bursts start together. Different timestamps retain a
 // small stagger so ordinary live traffic does not overwhelm the map.
@@ -10,11 +13,31 @@ export interface MapPlayback {
   active: { event: ThreatEvent; startedAt: number; lane: number }[];
   pending: ThreatEvent[];
   lastStartedAt: number;
+  omittedRoutes: number;
 }
 
-export const emptyPlayback: MapPlayback = { active: [], pending: [], lastStartedAt: -Infinity };
+export const emptyPlayback: MapPlayback = { active: [], pending: [], lastStartedAt: -Infinity, omittedRoutes: 0 };
 
-// FIFO playback never evicts an unplayed event to make room for a new one.
+function boundedPending(state: MapPlayback, pending: ThreatEvent[]): MapPlayback {
+  const overflow = Math.max(0, pending.length - MAX_PENDING_ROUTES);
+  return { ...state, pending: overflow ? pending.slice(overflow) : pending,
+    omittedRoutes: state.omittedRoutes + overflow };
+}
+
+export function enqueueRoute(state: MapPlayback, event: ThreatEvent): MapPlayback {
+  if (state.pending.some((item) => item.id === event.id) ||
+      state.active.some((route) => route.event.id === event.id)) return state;
+  return boundedPending(state, [...state.pending, event]);
+}
+
+export function pausePlayback(state: MapPlayback): MapPlayback {
+  // Resume interrupted routes in FIFO order. The same overload bound applies
+  // when active routes are returned to a full queue.
+  return boundedPending({ ...emptyPlayback, omittedRoutes: state.omittedRoutes },
+    [...state.active.map((route) => route.event), ...state.pending]);
+}
+
+// FIFO playback retains its order within the bounded visualization backlog.
 // Events sharing one timestamp start in the same frame, producing the
 // simultaneous multi-origin fan used by the demonstration. Untimestamped
 // test/legacy records use the ordinary staggered path.
@@ -53,7 +76,7 @@ export function advancePlayback(state: MapPlayback, now: number): MapPlayback {
     startedSoFar.push({ event, lane });
     return { event, startedAt: now, lane };
   });
-  return { active: [...active, ...started], pending, lastStartedAt: now };
+  return { ...state, active: [...active, ...started], pending, lastStartedAt: now };
 }
 
 function startedLanes(

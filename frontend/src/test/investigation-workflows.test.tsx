@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import IPLookup from '@/pages/IPLookup';
 import LogAnalyzerPage from '@/pages/LogAnalyzerPage';
@@ -7,7 +7,7 @@ import ThreatTable from '@/components/ThreatTable';
 import { cleanAIAnalysis } from '@/lib/cleanAIAnalysis';
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); sessionStorage.clear(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); sessionStorage.clear(); });
 const event: ThreatEvent = { id: '9', source_ip: '203.0.113.9', server_id: 'spandan-web', attack_type: 'scanner', severity: 'medium', method: 'GET', path: '/private', status_code: 404, dest_port: null, country: 'BD', lat: null, lng: null, timestamp: '2026-10-05T10:00:00Z', explanation: 'Broad directory probing', anomaly_score: null };
 const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 
@@ -60,6 +60,25 @@ describe('investigation workflows', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/analysis-status?job_id=' + id);
     expect(screen.getByRole('status')).toHaveTextContent('6 accepted · 2 rejected · 1 rule detections');
     expect(screen.queryByText(/simulation/)).not.toBeInTheDocument();
+  });
+
+  it('continues polling a retrying worker job until completion', async () => {
+    vi.useFakeTimers();
+    const id = 'a'.repeat(32);
+    sessionStorage.setItem('vanguard-analysis-job', id);
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(reply({ jobId: id, state: 'retrying', processed: 2, total: 8, rejected: 0, error: 'Temporary worker interruption' }))
+      .mockResolvedValueOnce(reply({ jobId: id, state: 'complete', processed: 8, total: 8, rejected: 0, detections: 1 }));
+    render(<LogAnalyzerPage />);
+    await act(async () => {});
+    expect(screen.getByText('Worker retry pending')).toBeInTheDocument();
+    expect(screen.getByText(/job remains active while the worker retries/)).toBeInTheDocument();
+    expect(screen.queryByText('Analysis failed')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Analysis running' })).toBeDisabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(screen.getByText('Analysis complete')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Temporary worker interruption')).not.toBeInTheDocument();
   });
 
   it('rejects a wrong job status rather than showing another upload as completed', async () => {

@@ -27,7 +27,7 @@ from app.schemas.ingest import LogEntry
 from app.schemas.event import ThreatEventCreate
 from app.services.behavioral_features import AUTH_PATH_RE, behavioral_features
 from app.redis_client import redis_client
-from app.services.log_parser import parse_timestamp
+from app.services.log_parser import decoded_path_views, parse_timestamp, signature_views
 from app.services.scanner_detection import SCANNER_UA_RE, SCANNER_PATH_RE
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 
 # SQL Injection — matches common SQL keywords and syntax in URL paths/params
 _SQL_RE = re.compile(
-    r"(union[\s\+]+(?:all[\s\+]+)?select|select.{0,20}from|insert[\s\+]+into|"
-    r"update.{0,20}set[\s\+]|delete[\s\+]+from|drop[\s\+]+(?:table|database)|"
-    r"exec(?:ute)?[\s\+(]|(?<!\w)xp_(?:cmdshell|dirtree|fileexist|regread|regwrite)\b|benchmark[\s\+(]|sleep[\s\+(]|"
-    r"waitfor[\s\+]+delay|'\s*(?:or|and)\s*'|--\s|;\s*(?:drop|select|insert)|"
+    r"(\bunion\s+(?:all\s+)?select\b|\bselect\b.{0,20}\bfrom\b|\binsert\s+into\b|"
+    r"\bupdate\b.{0,20}\bset\s|\bdelete\s+from\b|\bdrop\s+(?:table|database)\b|"
+    r"\bexec(?:ute)?[\s(]|(?<!\w)xp_(?:cmdshell|dirtree|fileexist|regread|regwrite)\b|\bbenchmark[\s(]|\bsleep[\s(]|"
+    r"\bwaitfor\s+delay\b|'\s*(?:or|and)\s*'|--\s|;\s*(?:drop|select|insert)\b|"
     r"/\*.*?\*/|0x[0-9a-f]{4,})",
     re.IGNORECASE,
 )
@@ -89,9 +89,10 @@ class DetectionEngine:
         if log.event_id is None:
             log.event_id = uuid.uuid4().hex
         profile = settings.DETECTION_PROFILES.get(log.server_id, settings.DETECTION_DEFAULT_PROFILE)
-        path = urlsplit(log.path or "/").path or "/"
-        auth = bool(_BRUTE_PATH_RE.search(path))
-        counts = await redis_client.event_counts(
+        paths = decoded_path_views(log.path or "/")
+        path = paths[-1]
+        auth = any(_BRUTE_PATH_RE.search(view) for view in paths)
+        counts, context_end = await redis_client.contextual_event_counts(
             log.source_ip, server_id=log.server_id, timestamp=dt.timestamp(),
             event_id=log.event_id,
             counters={
@@ -104,6 +105,7 @@ class DetectionEngine:
             },
         )
         counts["same_path"] = counts[f"path:{path}"]
+        counts["context_end"] = context_end
 
         # ── Step 2: IP reputation from Redis (populated by enrich_ip_task) ───
         client = redis_client._require_client()
@@ -146,17 +148,22 @@ class DetectionEngine:
 
     async def _detect_rule(
         self, log: LogEntry, dt: datetime, request_volume: int,
-        counts: dict[str, int] | None = None,
+        counts: dict[str, int | float] | None = None,
     ) -> ThreatEventCreate | None:
         path = log.path or ""
-        probe_path = urlsplit(path).path
+        views = signature_views(path)
+        probe_paths = decoded_path_views(path)
         ua = log.user_agent or ""
         status = log.status_code or 0
         counts = counts or {}
         profile = settings.DETECTION_PROFILES.get(log.server_id, settings.DETECTION_DEFAULT_PROFILE)
+        context_end = datetime.fromtimestamp(counts.get("context_end", dt.timestamp()), tz=dt.tzinfo)
+        context_note = f" Context ends at {context_end.isoformat()}."
+        if context_end > dt:
+            context_note += " Reassessed with already observed later requests after late delivery."
 
         # SQL Injection — SQL syntax in URL path or query string
-        if _SQL_RE.search(path):
+        if any(_SQL_RE.search(view) for view in views):
             return self._make_event(
                 log, dt,
                 attack_type="sql_injection",
@@ -168,7 +175,7 @@ class DetectionEngine:
             )
 
         # XSS — script injection in URL
-        if _XSS_RE.search(path):
+        if any(_XSS_RE.search(view) for view in views):
             return self._make_event(
                 log, dt,
                 attack_type="xss",
@@ -180,7 +187,7 @@ class DetectionEngine:
             )
 
         # Path Traversal — directory escape or sensitive file access
-        if _TRAVERSAL_RE.search(path):
+        if any(_TRAVERSAL_RE.search(view) for view in views):
             return self._make_event(
                 log, dt,
                 attack_type="path_traversal",
@@ -192,7 +199,7 @@ class DetectionEngine:
             )
 
         # Brute Force — repeated auth failures from same IP
-        is_auth_path = bool(_BRUTE_PATH_RE.search(path))
+        is_auth_path = any(_BRUTE_PATH_RE.search(view) for view in probe_paths)
         is_auth_failure = status in (401, 403, 429)
         failed_auth_attempts = counts.get("failed_auth", 0)
         limited_auth_attempts = counts.get("limited_auth", 0)
@@ -210,7 +217,7 @@ class DetectionEngine:
                     f"Possible brute force: {failed_auth_attempts} authentication failures and "
                     f"{limited_auth_attempts} rate-limited authentication requests "
                     f"({failed_ratio:.0%} of authentication requests) in five minutes of "
-                    f"request time. Latest endpoint {path}, HTTP {status}. Investigate; "
+                    f"request time. Observed endpoint {path}, HTTP {status}.{context_note} Investigate; "
                     "HTTP 429 indicates throttling, not an invalid password or account compromise."
                 ),
             )
@@ -231,11 +238,12 @@ class DetectionEngine:
                              f"of request time, {concentration:.0%} to the current path, "
                              f"{errors:.0%} HTTP 5xx, {slow:.0%} slow among measured requests "
                              f"({timing_coverage:.0%} timing coverage). A service fault or "
-                             "legitimate surge can also explain this; investigate."),
+                             f"legitimate surge can also explain this; investigate.{context_note}"),
             )
 
         # Scanner / Recon — known tool user-agents or sensitive path probing
-        if _SCANNER_UA_RE.search(ua) or _SCANNER_PATH_RE.search(probe_path):
+        probed_path = next((view for view in probe_paths if _SCANNER_PATH_RE.search(view)), None)
+        if _SCANNER_UA_RE.search(ua) or probed_path is not None:
             return self._make_event(
                 log, dt,
                 attack_type="scanner",
@@ -244,7 +252,7 @@ class DetectionEngine:
                 explanation=(
                     f"Reconnaissance indicator (not proof of exploitation). "
                     + (f"User-agent: {ua[:80]}. " if _SCANNER_UA_RE.search(ua) else "")
-                    + (f"Probed path: {probe_path[:80]}." if _SCANNER_PATH_RE.search(probe_path) else "")
+                    + (f"Probed path: {urlsplit(path).path[:80]}." if probed_path is not None else "")
                 ),
             )
 

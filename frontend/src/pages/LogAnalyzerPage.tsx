@@ -81,12 +81,13 @@ export default function LogAnalyzerPage() {
     {error && <p role="alert" className="rounded border border-destructive/40 bg-destructive/10 p-4 text-destructive">{error}</p>}
     {pollError && <div role="alert" className="rounded border border-warning/40 p-4 text-warning"><p>{pollError}. Status checking will retry; the worker may still be processing.</p><button onClick={() => { setJobId(''); setJob(null); sessionStorage.removeItem('vanguard-analysis-job'); }} className="mt-2 min-h-10 underline">Dismiss local job tracking</button></div>}
     {job && <section aria-label="Analysis progress" className="rounded border border-border bg-card p-4 space-y-3">
-      <h2 className="font-semibold">{job.state === 'complete' ? 'Analysis complete' : job.state === 'error' ? 'Analysis failed' : job.state === 'queued' ? 'Waiting for worker' : 'Analysis in progress'}</h2>
+      <h2 className="font-semibold">{job.state === 'complete' ? 'Analysis complete' : job.state === 'error' ? 'Analysis failed' : job.state === 'queued' ? 'Waiting for worker' : job.state === 'retrying' ? 'Worker retry pending' : 'Analysis in progress'}</h2>
+      {job.state === 'retrying' && <p role="status" className="text-sm text-warning">The job remains active while the worker retries. Status checking will continue automatically.</p>}
       <p className="break-all text-xs text-muted-foreground">Job {job.jobId} · status retained for 7 days</p>
       <progress className="w-full" aria-label="Lines processed" value={job.processed} max={job.total || 1} />
       <p role="status" className="text-sm">{job.processed} / {job.total} lines checked · {Math.max(0, job.processed - job.rejected)} accepted · {job.rejected} rejected · {job.detections ?? 0} rule detections</p>
       {job.rejected > 0 && <p className="text-sm text-warning">Rejected lines could not be parsed. Check timestamp timezone, IP addresses, required log fields and numeric measurements.</p>}
-      {job.error && <p role="alert" className="break-words text-destructive">{job.error}</p>}
+      {job.error && <p role={job.state === 'retrying' ? 'status' : 'alert'} className={`break-words ${job.state === 'retrying' ? 'text-warning' : 'text-destructive'}`}>{job.error}</p>}
       {job.state === 'complete' && <p className="text-sm">Stored findings are available in the <a href="/" className="text-primary underline">Dashboard</a>. Choose a period that includes the log dates. Later ML findings are separate from this rule-detection count.</p>}
     </section>}
   </div>;

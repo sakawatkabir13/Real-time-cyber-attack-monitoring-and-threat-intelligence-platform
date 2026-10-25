@@ -7,7 +7,7 @@ import { ComposableMap, Geographies, Geography, Line, Marker, ZoomableGroup } fr
 import countries from 'world-atlas/countries-110m.json';
 
 import type { MapTarget, SubscribeToDetections, ThreatEvent } from '@/hooks/useThreatFeed';
-import { advancePlayback, emptyPlayback } from './mapPlayback';
+import { advancePlayback, emptyPlayback, enqueueRoute, pausePlayback } from './mapPlayback';
 import { useAppStore } from '@/store/appStore';
 import './ThreatMap.css';
 
@@ -166,14 +166,10 @@ export default function ThreatMap({
   const enqueueDetection = useCallback((event: ThreatEvent) => {
     if (seenIds.current.has(event.id)) return;
     seenIds.current.add(event.id);
-    // Bound the replay guard, not the playback queue. Pending IDs are also checked below.
+    // Bound the replay guard separately from the bounded animation backlog.
     if (seenIds.current.size > 5000) seenIds.current.delete(seenIds.current.values().next().value!);
     if (reducedMotion || !sourcePoint(event) || !targetPoint(event, configuredTarget)) return;
-    setPlayback((current) => {
-      if (current.pending.some((item) => item.id === event.id) ||
-          current.active.some((route) => route.event.id === event.id)) return current;
-      return { ...current, pending: [...current.pending, event] };
-    });
+    setPlayback((current) => enqueueRoute(current, event));
   }, [configuredTarget, reducedMotion]);
 
   useEffect(() => subscribeToTraffic?.(enqueueDetection), [subscribeToTraffic, enqueueDetection]);
@@ -196,8 +192,7 @@ export default function ThreatMap({
   const togglePaused = () => {
     if (!paused) {
       // Restart any interrupted route on resume, rather than losing it while hidden.
-      setPlayback((current) => ({ ...emptyPlayback,
-        pending: [...current.active.map((route) => route.event), ...current.pending] }));
+      setPlayback(pausePlayback);
     }
     setPaused((current) => !current);
   };
@@ -255,6 +250,9 @@ export default function ThreatMap({
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-cyan-300/20 bg-[#071218]/90 px-2 py-1 text-[10px] text-cyan-100">
           {playback.active.length} animating · {playback.pending.length} queued
           {playback.pending.length > 0 && <span className="block text-slate-400">{paused ? 'Paused — requests retained' : 'Queued playback — not real-time packet timing'}</span>}
+          {playback.omittedRoutes > 0 && <span role="status" className="block max-w-xs text-amber-300">
+            Map overload: {playback.omittedRoutes.toLocaleString()} request animations omitted to keep playback bounded. Stored detections are unchanged.
+          </span>}
           {trafficEvents.some((event) => !sourcePoint(event) || !targetPoint(event, configuredTarget)) &&
             <span className="block text-slate-400">Some requests cannot be geolocated; no coordinates are invented.</span>}
         </div>

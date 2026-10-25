@@ -5,7 +5,7 @@ import ipaddress
 import json
 import math
 import re
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from app.config import settings
 from app.schemas.ingest import LogEntry
@@ -15,6 +15,35 @@ LOG_PATTERN = re.compile(
     r'^(\S+) \S+ \S+ \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" (\d{3}) (\d+|-)'
     r'(?:\s+"[^"\n]*"\s+"([^"\n]*)")?(?:\s+(rt|rt_us)=([0-9.]+))?\s*$'
 )
+
+
+def percent_decoded_views(value: str) -> tuple[str, ...]:
+    """Bound signature work to 8,192 characters and two decoding passes.
+
+    Percent decoding is deliberately separate from form-query ``+`` handling:
+    a literal plus in a URL path, or an encoded ``%2B`` in a query, is not a space.
+    """
+    views = [value[:8192]]
+    for _ in range(2):
+        decoded = unquote(views[-1], errors="replace")
+        if decoded == views[-1]:
+            break
+        views.append(decoded)
+    return tuple(views)
+
+
+def decoded_path_views(target: str) -> tuple[str, ...]:
+    return percent_decoded_views(urlsplit(target[:8192]).path or "/")
+
+
+def signature_views(target: str) -> tuple[str, ...]:
+    """Inspect path and form-query separately; retain the original log.path."""
+    parts = urlsplit(target[:8192])
+    paths = percent_decoded_views(parts.path or "/")
+    # Do this before percent decoding, only once. An encoded literal plus must
+    # not turn into whitespace on a subsequent decoding pass.
+    query = percent_decoded_views(parts.query.replace("+", " ")) if parts.query else ()
+    return tuple(dict.fromkeys((*paths, *query)))
 
 
 def parse_timestamp(value: str | int | float) -> datetime:

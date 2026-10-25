@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { geoEqualEarth, geoPath } from 'd3-geo';
 
 import ThreatMap, { routeCoordinates } from '@/components/ThreatMap';
+import { MAX_PENDING_ROUTES } from '@/components/mapPlayback';
 import type { ThreatEvent } from '@/hooks/useThreatFeed';
 
 const reducedMotion = vi.hoisted(() => vi.fn(() => false));
@@ -51,6 +52,25 @@ beforeEach(() => { reducedMotion.mockReturnValue(false); vi.useFakeTimers(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('ThreatMap precision routes', () => {
+  it('reports omitted overload animations while keeping the paused backlog bounded', () => {
+    let deliver: ((value: ThreatEvent) => void) | undefined;
+    const subscribe = (listener: (value: ThreatEvent) => void) => {
+      deliver = listener;
+      return () => { deliver = undefined; };
+    };
+    render(<ThreatMap events={[]} liveEvent={null} subscribeToTraffic={subscribe} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Pause map animations' }));
+    act(() => {
+      for (let index = 0; index < MAX_PENDING_ROUTES + 5; index += 1) {
+        deliver?.({ ...event(String(index), 23.81, 90.41), severity: 'normal' });
+      }
+    });
+    expect(screen.getByText(`0 animating · ${MAX_PENDING_ROUTES} queued`)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Map overload: 5 request animations omitted');
+    expect(screen.getByRole('status')).toHaveTextContent('Stored detections are unchanged');
+    expect(screen.queryByTestId('threat-arc')).not.toBeInTheDocument();
+  });
+
   it('animates normal HTTP requests neutrally without adding source markers, cards or detection counts', () => {
     const normal = { ...event('normal', 23.81, 90.41), kind: 'http_request' as const,
       attack_type: 'http_request', severity: 'normal' };

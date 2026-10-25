@@ -1,7 +1,7 @@
 """Shared reconnaissance indicators and conservative completed-window evidence."""
 
 import re
-from urllib.parse import urlsplit
+from app.services.log_parser import decoded_path_views
 
 
 SCANNER_UA_RE = re.compile(
@@ -22,7 +22,7 @@ SCANNER_PATH_RE = re.compile(
 def scanner_indicator(path: str, user_agent: str) -> bool:
     # Query strings do not turn an ordinary filename into a sensitive target.
     return bool(SCANNER_UA_RE.search(user_agent or "") or
-                SCANNER_PATH_RE.search(urlsplit(path or "/").path))
+                any(SCANNER_PATH_RE.search(view) for view in decoded_path_views(path or "/")))
 
 
 def is_directory_enumeration(

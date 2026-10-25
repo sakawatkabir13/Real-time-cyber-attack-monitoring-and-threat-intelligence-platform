@@ -77,4 +77,22 @@ describe('Alert investigations', () => {
     expect(await screen.findByText(/3 sources \/ 3 alerts/)).toBeInTheDocument();
     expect(screen.getByText(/does not establish a common attacker/)).toBeInTheDocument();
   });
+
+  it('requests related groups with the current alert filters and reloads when they change', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify([])));
+    const before = Date.now();
+    const view = render(<RelatedIncidents serverId="web-a" attackType="http_flood"
+      minimumSeverity="high" verdict="uncertain" days={7} search="203.0.113.7" />);
+    await screen.findByText('No related groups match these filters.');
+    const params = new URL(fetchMock.mock.calls[0][0] as string, 'https://vanguard.test').searchParams;
+    expect(Object.fromEntries(params.entries())).toMatchObject({
+      limit: '50', server_id: 'web-a', attack_type: 'http_flood',
+      minimum_severity: 'high', verdict: 'uncertain', search: '203.0.113.7',
+    });
+    expect(Date.parse(params.get('since')!)).toBeGreaterThanOrEqual(before - 7 * 86400000);
+    view.rerender(<RelatedIncidents serverId="web-b" minimumSeverity="medium" />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const next = new URL(fetchMock.mock.calls[1][0] as string, 'https://vanguard.test').searchParams;
+    expect(Object.fromEntries(next.entries())).toEqual({ limit: '50', server_id: 'web-b', minimum_severity: 'medium' });
+  });
 });
