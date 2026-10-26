@@ -52,6 +52,10 @@ BEHAVIOR_FEATURES = (
 FEATURE_NAMES["server"] += BEHAVIOR_FEATURES + ("max_path_unique_ips",)
 FEATURE_NAMES["source"] += BEHAVIOR_FEATURES + ("top_path_share",)
 
+# Binary context remains an input to the model, but its valid 0/1 transitions
+# must not be judged by a continuous-feature distance/quarantine rule.
+BINARY_FEATURES = frozenset({"previous_window_present"})
+
 LOG_FEATURES = {
     "request_rate",
     "unique_ips",

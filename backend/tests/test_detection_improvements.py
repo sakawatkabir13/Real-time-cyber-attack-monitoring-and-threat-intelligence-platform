@@ -318,6 +318,7 @@ def test_schema_three_training_artifact_and_inference_are_compatible(scope, tmp_
     rows = []
     for index in range(250):
         fields = {name: float(rng.uniform(0.4, 0.6)) for name in FEATURE_NAMES[scope]}
+        fields["previous_window_present"] = index % 2
         fields["window_start"] = datetime(2026, 8, 5, tzinfo=timezone.utc) + timedelta(minutes=index)
         rows.append(SimpleNamespace(**fields))
     constructor = train_model.IsolationForest

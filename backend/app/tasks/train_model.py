@@ -21,6 +21,7 @@ from app.database import sync_database_url
 from app.models.ml_model_run import MlModelRun
 from app.models.traffic_window import TrafficWindow
 from app.services.ml_features import (
+    BINARY_FEATURES,
     FEATURE_NAMES,
     calibrate_anomaly_score,
     raw_vector,
@@ -44,10 +45,17 @@ def _fit_scope(scope: str, rows: list[TrafficWindow]) -> tuple[dict | None, str 
     if len(rows) < settings.ML_MIN_TRAINING_WINDOWS:
         return None, "insufficient clean traffic windows"
     rows = sorted(rows, key=lambda row: row.window_start)
+    raw = np.vstack([raw_vector(scope, window_values(row)) for row in rows])
+    # Reject malformed data in *any* period, including validation. Do not drop
+    # invalid validation rows or let transformations mask non-finite inputs.
+    if not np.isfinite(raw).all():
+        return None, "non-finite traffic feature values"
+    binary_columns = [name in BINARY_FEATURES for name in FEATURE_NAMES[scope]]
+    if not np.isin(raw[:, binary_columns], (0.0, 1.0)).all():
+        return None, "invalid binary traffic feature values"
     transformed = np.vstack(
         [transform_vector(scope, window_values(row)) for row in rows]
     )
-    raw = np.vstack([raw_vector(scope, window_values(row)) for row in rows])
 
     # Fit, calibration and validation are disjoint chronological periods. Keep
     # all sources from one timestamp together to avoid leaking one burst across
@@ -67,7 +75,15 @@ def _fit_scope(scope: str, rows: list[TrafficWindow]) -> tuple[dict | None, str 
     median = np.median(fit_values, axis=0)
     mad = np.median(np.abs(fit_values - median), axis=0)
     safe_mad = np.maximum(mad, 0.05)
-    keep = np.all(np.abs((transformed - median) / safe_mad) < 12.0, axis=1)
+    continuous_columns = np.logical_not(binary_columns)
+    # A rare but valid binary flip is not a 20-MAD poisoned measurement. Its
+    # domain was checked above; retain it for model fitting and scoring while
+    # preserving the existing 12-MAD guard for every continuous feature.
+    keep = np.all(
+        np.abs((transformed[:, continuous_columns] - median[continuous_columns])
+               / safe_mad[continuous_columns]) < 12.0,
+        axis=1,
+    )
     training = transformed[:fit_end][keep[:fit_end]]
     calibration = transformed[fit_end:calibration_end][keep[fit_end:calibration_end]]
     validation = transformed[calibration_end:]

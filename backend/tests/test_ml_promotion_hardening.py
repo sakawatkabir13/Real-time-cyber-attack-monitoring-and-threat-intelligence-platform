@@ -21,9 +21,10 @@ from app.tasks import train_model
 from quarantine_demo_windows import demo_windows
 
 
-def candidate_rows():
+def candidate_rows(scope="server"):
     start = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    return [SimpleNamespace(**{**{name: .5 + index / 1000 for name in FEATURE_NAMES["server"]},
+    return [SimpleNamespace(**{**{name: .5 + index / 1000 for name in FEATURE_NAMES[scope]},
+                              "previous_window_present": 0,
                               "window_start": start + timedelta(minutes=index // 3)})
             for index in range(15)]
 
@@ -38,7 +39,8 @@ def fake_forest(monkeypatch):
         def score_samples(self, x):
             calls = captured.setdefault("score_calls", [])
             calls.append(x.copy())
-            return -np.array([.3, .4, .5] if len(calls) == 1 else captured.get("validation_scores", [.31, .32, .33]))
+            return -np.array(np.linspace(.3, .5, len(x)) if len(calls) == 1 else
+                             captured.get("validation_scores", np.linspace(.31, .33, len(x))))
         def predict(self, x):
             return np.ones(len(x))
     monkeypatch.setattr(train_model, "IsolationForest", Forest)
@@ -60,14 +62,83 @@ def test_calibration_uses_disjoint_chronological_periods_without_timestamp_leaka
     assert component["calibration_method"] == "chronological_holdout_v1"
 
 
-def test_validation_outliers_are_not_discarded_to_pass_promotion(monkeypatch):
+@pytest.mark.parametrize("scope", ["server", "source"])
+def test_validation_outliers_are_not_discarded_to_pass_promotion(monkeypatch, scope):
     captured = fake_forest(monkeypatch)
-    rows = candidate_rows()
+    rows = candidate_rows(scope)
     rows[-1].avg_bytes = 1e20
-    component, reason = train_model._fit_scope("server", rows)
+    component, reason = train_model._fit_scope(scope, rows)
     assert reason is None
     assert component["validation_samples"] == 3
     assert captured["score_calls"][1].max() > 40
+
+
+@pytest.mark.parametrize("scope", ["server", "source"])
+@pytest.mark.parametrize("majority", [0, 1])
+def test_valid_binary_changes_remain_in_all_training_periods(monkeypatch, scope, majority):
+    captured = fake_forest(monkeypatch)
+    rows = candidate_rows(scope)
+    for index, row in enumerate(rows):
+        row.previous_window_present = 1 - majority if index in (7, 8, 9, 12) else majority
+    component, reason = train_model._fit_scope(scope, rows)
+    assert reason is None
+    assert component["sample_count"] == len(rows)
+    column = FEATURE_NAMES[scope].index("previous_window_present")
+    assert np.array_equal(captured["fit"][:, column], [row.previous_window_present for row in rows[:9]])
+    for actual, expected in zip(captured["score_calls"], (rows[9:12], rows[12:])):
+        assert np.array_equal(actual[:, column], [row.previous_window_present for row in expected])
+
+
+@pytest.mark.parametrize("scope", ["server", "source"])
+@pytest.mark.parametrize("index", [0, 9, 12])
+@pytest.mark.parametrize("value", [-1, .5, 2, float("nan"), float("inf"), -float("inf")])
+def test_invalid_binary_values_reject_candidate_including_validation(monkeypatch, scope, index, value):
+    captured = fake_forest(monkeypatch)
+    rows = candidate_rows(scope)
+    rows[index].previous_window_present = value
+    component, reason = train_model._fit_scope(scope, rows)
+    assert component is None
+    assert reason == ("invalid binary traffic feature values" if np.isfinite(value)
+                      else "non-finite traffic feature values")
+    assert "fit" not in captured
+
+
+@pytest.mark.parametrize("scope", ["server", "source"])
+@pytest.mark.parametrize("index", [0, 9, 12])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_non_finite_continuous_values_reject_before_transform(monkeypatch, scope, index, value):
+    captured = fake_forest(monkeypatch)
+    rows = candidate_rows(scope)
+    rows[index].avg_bytes = value
+    component, reason = train_model._fit_scope(scope, rows)
+    assert component is None and reason == "non-finite traffic feature values"
+    assert "fit" not in captured
+
+
+@pytest.mark.parametrize("scope", ["server", "source"])
+@pytest.mark.parametrize("index,partition", [(0, "fit"), (9, "calibration")])
+def test_continuous_extremes_are_still_quarantined(monkeypatch, scope, index, partition):
+    captured = fake_forest(monkeypatch)
+    rows = candidate_rows(scope)
+    rows[index].avg_bytes = 1e20
+    component, reason = train_model._fit_scope(scope, rows)
+    assert reason is None
+    assert component["sample_count"] == len(rows) - 1
+    assert component[partition + "_samples"] == (8 if partition == "fit" else 2)
+    column = FEATURE_NAMES[scope].index("avg_bytes")
+    assert captured["fit"][:, column].max() < 40
+    assert captured["score_calls"][0][:, column].max() < 40
+    assert component["validation_samples"] == 3
+
+
+def test_continuous_quarantine_cannot_bypass_minimum_samples(monkeypatch):
+    captured = fake_forest(monkeypatch)
+    rows = candidate_rows()
+    rows[0].avg_bytes = 1e20
+    monkeypatch.setattr(settings, "ML_MIN_TRAINING_WINDOWS", len(rows))
+    component, reason = train_model._fit_scope("server", rows)
+    assert component is None and reason == "too many extreme or potentially poisoned windows"
+    assert "fit" not in captured
 
 
 def test_repeated_same_period_cannot_be_split_into_fake_holdout(monkeypatch):
@@ -81,11 +152,12 @@ def test_repeated_same_period_cannot_be_split_into_fake_holdout(monkeypatch):
 
 @pytest.mark.parametrize("scores,reason_fragment", [([1., 1., 1.], "drift"),
                                                        ([.497, .497, .497], "alert fraction")])
-def test_validation_gates_still_reject_unsafe_candidates(monkeypatch, scores, reason_fragment):
+@pytest.mark.parametrize("scope", ["server", "source"])
+def test_validation_gates_still_reject_unsafe_candidates(monkeypatch, scope, scores, reason_fragment):
     captured = fake_forest(monkeypatch)
     captured["validation_scores"] = scores
     monkeypatch.setattr(settings, "ML_ALERT_SCORE", 90)
-    component, reason = train_model._fit_scope("server", candidate_rows())
+    component, reason = train_model._fit_scope(scope, candidate_rows(scope))
     assert component is None and reason_fragment in reason
 
 
